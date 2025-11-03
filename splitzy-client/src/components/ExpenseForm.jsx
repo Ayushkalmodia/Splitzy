@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, DollarSign, Calendar, Users, Tag, FileText, Percent, Equal } from 'lucide-react'
+import { authService } from '../services/authService'
 
 const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [] }) => {
   const [formData, setFormData] = useState(initialData || {
@@ -15,6 +16,7 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
 
   const [selectedGroupMembers, setSelectedGroupMembers] = useState([])
   const [splitAmounts, setSplitAmounts] = useState({})
+  const currentUser = authService.getCurrentUser()
 
   const categories = [
     { id: 'food', label: 'Food & Dining', icon: '🍽️' },
@@ -29,16 +31,22 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
   // Update group members when group changes
   useEffect(() => {
     if (formData.group) {
-      const group = groups.find(g => g.name === formData.group)
+      const group = groups.find(g => g._id === formData.group)
       if (group) {
         setSelectedGroupMembers(group.members)
-        // Initialize split amounts for equal split
+        // Initialize split amounts for equal split (not persisted; backend uses equal split implicitly)
         const equalAmount = formData.amount ? (formData.amount / group.members.length).toFixed(2) : 0
         const initialSplitAmounts = {}
         group.members.forEach(member => {
           initialSplitAmounts[member] = equalAmount
         })
         setSplitAmounts(initialSplitAmounts)
+        // Default paidBy to current user if present in group, otherwise first member
+        if (currentUser?.email && group.members.includes(currentUser.email)) {
+          setFormData((prev) => ({ ...prev, paidBy: currentUser.email }))
+        } else if (!formData.paidBy) {
+          setFormData((prev) => ({ ...prev, paidBy: group.members[0] || '' }))
+        }
       }
     } else {
       setSelectedGroupMembers([])
@@ -74,11 +82,13 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
       return
     }
     const finalData = {
-      ...formData,
-      splitBetween: Object.entries(splitAmounts).map(([member, amount]) => ({
-        member,
-        amount: parseFloat(amount)
-      }))
+      description: formData.description,
+      amount: parseFloat(formData.amount),
+      category: formData.category,
+      date: formData.date,
+      groupId: formData.group,
+      paidBy: formData.paidBy,
+      splitBetween: formData.splitBetween
     }
     onSubmit(finalData)
     onClose()
@@ -94,16 +104,21 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
   }
 
   const handleGroupChange = (e) => {
-    const selectedGroup = groups.find((g) => g.id === e.target.value)
+    const selectedGroup = groups.find((g) => g._id === e.target.value)
     setFormData((prev) => ({
       ...prev,
       group: e.target.value,
       splitBetween: selectedGroup ? selectedGroup.members : [],
-      paidBy: selectedGroup?.members[0] || "",
+      paidBy: selectedGroup?.members?.[0] || "",
     }))
   }
 
+  console.log("groups data 👉", groups);
+console.log("selected group id 👉", formData.group);
+
+
   if (!isOpen) return null
+
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -206,7 +221,7 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
             >
               <option value="">Select a group</option>
               {groups.map(group => (
-                <option key={group.id} value={group.id}>{group.name}</option>
+                <option key={group._id} value={group._id}>{group.name}</option>
               ))}
             </select>
           </div>
@@ -224,13 +239,11 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
             >
               <option value="">Select who paid</option>
               {formData.group &&
-                groups
-                  .find((g) => g.id === formData.group)
-                  ?.members.map((member) => (
-                    <option key={member} value={member}>
-                      {member}
-                    </option>
-                  ))}
+                selectedGroupMembers.map((member) => (
+                  <option key={member} value={member}>
+                    {member === currentUser?.email ? (currentUser?.name || member) : member}
+                  </option>
+                ))}
             </select>
           </div>
 
@@ -259,22 +272,20 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
             </label>
             <div className="space-y-2">
               {formData.group &&
-                groups
-                  .find((g) => g.id === formData.group)
-                  ?.members.map((member) => (
-                    <label
-                      key={member}
-                      className="flex items-center space-x-2 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={formData.splitBetween.includes(member)}
-                        onChange={() => handleMemberToggle(member)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-gray-700">{member}</span>
-                    </label>
-                  ))}
+                selectedGroupMembers.map((member) => (
+                  <label
+                    key={member}
+                    className="flex items-center space-x-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formData.splitBetween.includes(member)}
+                      onChange={() => handleMemberToggle(member)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">{member === currentUser?.email ? (currentUser?.name || member) : member}</span>
+                  </label>
+                ))}
             </div>
           </div>
 

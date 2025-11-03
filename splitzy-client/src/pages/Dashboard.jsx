@@ -24,6 +24,8 @@ import {
 import { FaPlus, FaTrash, FaUsers, FaMoneyBillWave, FaChartPie } from 'react-icons/fa'
 import ExpenseForm from '../components/ExpenseForm'
 import { toast } from 'react-hot-toast'
+import { expenseService } from '../services/expenseService'
+import { groupService } from '../services/groupService'
 
 const Dashboard = () => {
   const navigate = useNavigate()
@@ -66,26 +68,36 @@ const Dashboard = () => {
     fetchGroups()
   }, [navigate])
 
-  const fetchGroups = () => {
+  const fetchGroups = async () => {
     try {
-      const storedGroups = JSON.parse(localStorage.getItem('groups')) || []
-      setGroups(storedGroups)
+      const data = await groupService.getGroups()
+      setGroups(data)
     } catch (error) {
       console.error('Error fetching groups:', error)
       toast.error('Failed to load groups')
     }
   }
 
-  const fetchExpenses = () => {
+  const fetchExpenses = async () => {
     try {
-      const storedExpenses = JSON.parse(localStorage.getItem('expenses')) || []
-      setExpenses(storedExpenses)
-      calculateStats(storedExpenses)
+      const data = await expenseService.getExpenses()
+      setExpenses(data)
+      await fetchStats()
     } catch (error) {
       console.error('Error fetching expenses:', error)
       toast.error('Failed to load expenses')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchStats = async () => {
+    try {
+      const s = await expenseService.getExpenseStats()
+      setStats(s)
+    } catch (error) {
+      console.error('Error fetching stats:', error)
+      setStats({ totalSpent: 0, totalOwed: 0, totalReceived: 0 })
     }
   }
 
@@ -122,17 +134,11 @@ const Dashboard = () => {
     navigate('/login')
   }
 
-  const handleAddExpense = (expense) => {
+  const handleAddExpense = async (expense) => {
     try {
-      const newExpense = {
-        ...expense,
-        id: Date.now().toString(),
-        date: new Date().toISOString(),
-      }
-      const updatedExpenses = [...expenses, newExpense]
-      localStorage.setItem('expenses', JSON.stringify(updatedExpenses))
-      setExpenses(updatedExpenses)
-      calculateStats(updatedExpenses)
+      const created = await expenseService.createExpense(expense)
+      setExpenses([created, ...expenses])
+      await fetchStats()
       toast.success('Expense added successfully')
     } catch (error) {
       console.error('Error adding expense:', error)
@@ -140,14 +146,11 @@ const Dashboard = () => {
     }
   }
 
-  const handleEditExpense = (expense) => {
+  const handleEditExpense = async (expense) => {
     try {
-      const updatedExpenses = expenses.map((e) =>
-        e.id === expense.id ? { ...e, ...expense } : e
-      )
-      localStorage.setItem('expenses', JSON.stringify(updatedExpenses))
-      setExpenses(updatedExpenses)
-      calculateStats(updatedExpenses)
+      const updated = await expenseService.updateExpense(expense._id, expense)
+      setExpenses(expenses.map((e) => (e._id === updated._id ? updated : e)))
+      await fetchStats()
       toast.success('Expense updated successfully')
     } catch (error) {
       console.error('Error updating expense:', error)
@@ -155,12 +158,12 @@ const Dashboard = () => {
     }
   }
 
-  const handleDeleteExpense = (expenseId) => {
+  const handleDeleteExpense = async (expenseId) => {
     try {
-      const updatedExpenses = expenses.filter((e) => e.id !== expenseId)
-      localStorage.setItem('expenses', JSON.stringify(updatedExpenses))
+      await expenseService.deleteExpense(expenseId)
+      const updatedExpenses = expenses.filter((e) => e._id !== expenseId)
       setExpenses(updatedExpenses)
-      calculateStats(updatedExpenses)
+      await fetchStats()
       toast.success('Expense deleted successfully')
     } catch (error) {
       console.error('Error deleting expense:', error)
@@ -174,8 +177,9 @@ const Dashboard = () => {
   }
 
   const filteredExpenses = expenses.filter(expense => {
+    const groupName = groups.find(g => g._id === expense.groupId)?.name || ''
     const matchesSearch = expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         expense.group.toLowerCase().includes(searchQuery.toLowerCase())
+                         groupName.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesCategory = selectedCategory === 'all' || expense.category === selectedCategory
     return matchesSearch && matchesCategory
   })
@@ -191,6 +195,7 @@ const Dashboard = () => {
       </div>
     )
   }
+  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50">
@@ -429,11 +434,11 @@ const Dashboard = () => {
                       </div>
                     ) : (
                       filteredExpenses.slice(0, 5).map((expense) => (
-                        <div key={expense.id} className="p-6 flex items-center justify-between">
+                        <div key={expense._id} className="p-6 flex items-center justify-between">
                           <div>
                             <h3 className="font-medium text-neutral-900">{expense.description}</h3>
                             <p className="text-sm text-neutral-600">
-                              {expense.group} • {new Date(expense.date).toLocaleDateString()}
+                              {groups.find(g => g._id === expense.groupId)?.name || 'Ungrouped'} • {new Date(expense.date || expense.createdAt).toLocaleDateString()}
                             </p>
                           </div>
                           <div className="flex items-center gap-4">
@@ -451,7 +456,7 @@ const Dashboard = () => {
                                 Edit
                               </button>
                               <button
-                                onClick={() => handleDeleteExpense(expense.id)}
+                                onClick={() => handleDeleteExpense(expense._id)}
                                 className="p-2 text-neutral-600 hover:text-red-600 transition-colors"
                               >
                                 Delete

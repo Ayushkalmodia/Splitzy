@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { Plus, Users, UserPlus, Trash2, Edit2 } from 'lucide-react'
+import { groupService } from '../services/groupService'
+import { authService } from '../services/authService'
 
 const Groups = () => {
   const navigate = useNavigate()
@@ -17,53 +19,38 @@ const Groups = () => {
     fetchGroups()
   }, [])
 
-  const fetchGroups = () => {
+  const fetchGroups = async () => {
     try {
-      const storedGroups = localStorage.getItem('groups')
-      if (storedGroups) {
-        setGroups(JSON.parse(storedGroups))
-      } else {
-        // Initialize with some mock data
-        const mockGroups = [
-          {
-            id: '1',
-            name: 'Roommates',
-            members: ['Test User', 'John Doe', 'Jane Smith'],
-            createdAt: '2024-03-15'
-          },
-          {
-            id: '2',
-            name: 'Trip to Paris',
-            members: ['Test User', 'Alice Brown', 'Bob Wilson'],
-            createdAt: '2024-03-14'
-          }
-        ]
-        setGroups(mockGroups)
-        localStorage.setItem('groups', JSON.stringify(mockGroups))
-      }
+      const data = await groupService.getGroups()
+      setGroups(data)
     } catch (error) {
       toast.error('Failed to fetch groups')
       console.error('Error fetching groups:', error)
     }
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     try {
-      const newGroup = {
-        id: editingGroup?.id || Date.now().toString(),
+      const me = authService.getCurrentUser()
+      const payload = {
         name: formData.name,
-        members: formData.members.filter(member => member.trim() !== ''),
-        createdAt: editingGroup?.createdAt || new Date().toISOString().split('T')[0]
+        members: Array.from(
+          new Set([
+            ...formData.members.filter((m) => m.trim() !== ''),
+            me?.email || ''
+          ].filter(Boolean))
+        )
       }
-
-      const updatedGroups = editingGroup
-        ? groups.map(group => group.id === editingGroup.id ? newGroup : group)
-        : [...groups, newGroup]
-
-      setGroups(updatedGroups)
-      localStorage.setItem('groups', JSON.stringify(updatedGroups))
-      toast.success(editingGroup ? 'Group updated successfully' : 'Group created successfully')
+      if (editingGroup?._id) {
+        const updated = await groupService.updateGroup(editingGroup._id, payload)
+        setGroups(groups.map((g) => (g._id === editingGroup._id ? updated : g)))
+        toast.success('Group updated successfully')
+      } else {
+        const created = await groupService.createGroup(payload)
+        setGroups([...groups, created])
+        toast.success('Group created successfully')
+      }
       setShowGroupForm(false)
       setEditingGroup(null)
       setFormData({ name: '', members: [''] })
@@ -73,11 +60,10 @@ const Groups = () => {
     }
   }
 
-  const handleDeleteGroup = (groupId) => {
+  const handleDeleteGroup = async (groupId) => {
     try {
-      const updatedGroups = groups.filter(group => group.id !== groupId)
-      setGroups(updatedGroups)
-      localStorage.setItem('groups', JSON.stringify(updatedGroups))
+      await groupService.deleteGroup(groupId)
+      setGroups(groups.filter((g) => g._id !== groupId))
       toast.success('Group deleted successfully')
     } catch (error) {
       toast.error('Failed to delete group')
@@ -127,7 +113,12 @@ const Groups = () => {
             <p className="text-neutral-600">Manage your expense groups</p>
           </div>
           <button
-            onClick={() => setShowGroupForm(true)}
+            onClick={() => {
+              const me = authService.getCurrentUser()
+              setFormData({ name: '', members: [me?.email || '', ''] })
+              setEditingGroup(null)
+              setShowGroupForm(true)
+            }}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 text-white rounded-xl hover:from-teal-600 hover:to-emerald-700 transition-all duration-300"
           >
             <Plus className="h-5 w-5" />
@@ -139,13 +130,13 @@ const Groups = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {groups.map((group) => (
             <div
-              key={group.id}
+              key={group._id}
               className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-6 hover:border-teal-100 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300"
             >
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h3 className="text-xl font-semibold text-neutral-900">{group.name}</h3>
-                  <p className="text-sm text-neutral-600">Created on {group.createdAt}</p>
+                  <p className="text-sm text-neutral-600">Created on {new Date(group.createdAt).toLocaleDateString()}</p>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -155,7 +146,7 @@ const Groups = () => {
                     <Edit2 className="h-5 w-5" />
                   </button>
                   <button
-                    onClick={() => handleDeleteGroup(group.id)}
+                    onClick={() => handleDeleteGroup(group._id)}
                     className="p-2 text-neutral-600 hover:text-red-600 transition-colors"
                   >
                     <Trash2 className="h-5 w-5" />
@@ -170,7 +161,7 @@ const Groups = () => {
                 <ul className="space-y-1">
                   {group.members.map((member, index) => (
                     <li key={index} className="text-sm text-neutral-600">
-                      • {member}
+                      • {member === (authService.getCurrentUser()?.email) ? (authService.getCurrentUser()?.name || member) : member}
                     </li>
                   ))}
                 </ul>
