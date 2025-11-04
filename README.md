@@ -87,42 +87,6 @@ Recommended setup (used in production):
    - `VITE_API_URL=https://<service>.onrender.com/api`
 5. Redeploy and hard refresh (Cmd+Shift+R).
 
-## Common Issues & Fixes
-
-- 404 Not Found `/auth/...` in production
-  - Ensure `VITE_API_URL` ends with `/api` (e.g. `https://<backend>/api`).
-
-- CORS “Network Error”
-  - `CLIENT_ORIGIN` on backend must exactly equal the frontend origin.
-  - No trailing slash; include `https`.
-
-- 401 Unauthorized from APIs after login
-  - Token missing/invalid. Make sure login stores `token` in `localStorage` and axios includes `Authorization: Bearer <token>`.
-  - Clear browser storage: `localStorage.clear()` and log in again.
-
-- Server cold start (Render Free)
-  - First request may be slow. Consider upgrading plan if needed.
-
-## API Quick Test
-
-Register:
-```
-curl -i -X POST https://<backend>/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test","email":"test@example.com","password":"pass1234"}'
-```
-
-Login:
-```
-curl -i -X POST https://<backend>/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"pass1234"}'
-```
-
-Health:
-```
-curl https://<backend>/api/health
-```
 
 ## Scripts
 
@@ -134,6 +98,3 @@ Frontend (splitzy-client):
 Backend (splitzy-backend):
 - `npm run dev` – nodemon dev server
 - `npm start` – start server
-
-## License
-MIT (add a LICENSE file if applicable)
