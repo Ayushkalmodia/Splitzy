@@ -23,25 +23,21 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-
     try {
       setLoading(true)
-      
-      // Create mock user data
-      const mockUser = {
-        id: '1',
-        name: 'Test User',
-        email: formData.email
-      }
+      const data = await authService.login({
+        email: formData.email,
+        password: formData.password
+      })
 
-      // Store mock token and user data
-      localStorage.setItem('token', 'mock-token-123')
-      localStorage.setItem('user', JSON.stringify(mockUser))
+      localStorage.setItem('token', data.token)
+      localStorage.setItem('user', JSON.stringify(data.user))
 
       toast.success('Login successful!')
       navigate('/dashboard')
     } catch (error) {
-      toast.error(error.message || 'Login failed')
+      const message = typeof error === 'string' ? error : (error.message || 'Login failed')
+      toast.error(message)
     } finally {
       setLoading(false)
     }
