@@ -10,13 +10,50 @@ import Groups from './pages/Groups'
 import Footer from './components/Footer'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import { useAuth } from './hooks/useAuth.js'
 
 // Protected Route component
 const ProtectedRoute = ({ children }) => {
-  const token = localStorage.getItem('token')
-  if (!token) {
+  const { isAuthenticated, loading } = useAuth()
+  
+  // Show loading spinner while checking authentication
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600 mx-auto mb-4"></div>
+          <p className="text-neutral-600">Checking authentication...</p>
+        </div>
+      </div>
+    )
+  }
+  
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />
   }
+  
+  return children
+}
+
+// Public-only Route component (redirect signed-in users away from auth pages)
+const PublicOnlyRoute = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600 mx-auto mb-4"></div>
+          <p className="text-neutral-600">Checking authentication...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />
+  }
+
   return children
 }
 
@@ -32,8 +69,22 @@ const AppContent = () => {
       <main className="flex-grow">
         <Toaster position="top-right" />
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route
+            path="/login"
+            element={
+              <PublicOnlyRoute>
+                <Login />
+              </PublicOnlyRoute>
+            }
+          />
+          <Route
+            path="/register"
+            element={
+              <PublicOnlyRoute>
+                <Register />
+              </PublicOnlyRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={
@@ -51,9 +102,30 @@ const AppContent = () => {
             }
           />
           <Route path="/" element={<Home />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/settlements" element={<Settlements />} />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <Analytics />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settlements"
+            element={
+              <ProtectedRoute>
+                <Settlements />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </main>
       {!isAuthPage && !isDashboardPage && <Footer />}
@@ -64,7 +136,6 @@ const AppContent = () => {
 function App() {
   return (
     <Router>
-      <Toaster position="top-right" />
       <AppContent />
     </Router>
   )

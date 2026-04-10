@@ -5,33 +5,31 @@ import {
   Users, 
   CreditCard, 
   TrendingUp, 
-  ArrowRight,
-  Trash2,
-  Edit2,
-  CheckCircle2,
-  AlertCircle,
-  LogOut,
-  Settings,
-  User,
-  ChevronDown,
-  BarChart3,
-  PieChart,
   Activity,
   Search,
   Filter,
-  BarChart2
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react'
-import { FaPlus, FaTrash, FaUsers, FaMoneyBillWave, FaChartPie } from 'react-icons/fa'
-import ExpenseForm from '../components/ExpenseForm'
+import AdvancedExpenseForm from '../components/AdvancedExpenseForm.jsx'
 import { toast } from 'react-hot-toast'
 import { expenseService } from '../services/expenseService'
 import { groupService } from '../services/groupService'
+import LoadingSpinner from '../components/ui/LoadingSpinner.jsx'
+import { SkeletonCard } from '../components/ui/Skeleton.jsx'
+import ExpenseCard from '../components/ui/ExpenseCard.jsx'
+import EmptyState from '../components/ui/EmptyState.jsx'
+import { useAuth } from '../hooks/useAuth.js'
+import { formatCurrency } from '../utils/currency.js'
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card.jsx'
+import Button from '../components/ui/Button.jsx'
+import Input from '../components/ui/Input.jsx'
+import VirtualList from '../components/ui/VirtualList.jsx'
+import { useDebounce, useMemoizedCalculation, useMemoizedCallback, useOptimizedFilter } from '../hooks/usePerformance.js'
 
 const Dashboard = () => {
   const navigate = useNavigate()
-  const [user, setUser] = useState(null)
-  const [activeTab, setActiveTab] = useState('expenses')
-  const [showUserMenu, setShowUserMenu] = useState(false)
+  const { user, isAuthenticated, loading: authLoading } = useAuth()
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -43,503 +41,392 @@ const Dashboard = () => {
     totalOwed: 0,
     totalReceived: 0
   })
+  const [statsLoading, setStatsLoading] = useState(false)
+  const [, setGroups] = useState([])
+  const [, setGroupsLoading] = useState(true)
 
-  const [groups, setGroups] = useState([])
+  // Debounced search query
+  const debouncedSearchQuery = useDebounce(searchQuery, 300)
 
-  const [newExpense, setNewExpense] = useState({
-    description: '',
-    amount: '',
-    category: 'food',
-    group: '',
-    splitBetween: []
-  })
+  // Memoized filter function
+  const expenseFilter = useMemoizedCalculation(
+    () => (expense) => {
+      const matchesSearch = !debouncedSearchQuery || 
+        expense.description?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        expense.category?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
+      const matchesCategory = selectedCategory === 'all' || expense.category === selectedCategory
+      return matchesSearch && matchesCategory
+    },
+    [debouncedSearchQuery, selectedCategory]
+  )
 
-  useEffect(() => {
-    const storedUser = localStorage.getItem('user')
-    const token = localStorage.getItem('token')
+  // Optimized filtered expenses
+  const filteredExpenses = useOptimizedFilter(expenses, expenseFilter)
 
-    if (!storedUser || !token) {
-      navigate('/login')
-      return
-    }
+  // Memoized categories
+  const categories = useMemoizedCalculation(
+    () => {
+      const cats = [...new Set(expenses.map(expense => expense.category).filter(Boolean))]
+      return cats.sort()
+    },
+    [expenses]
+  )
 
-    setUser(JSON.parse(storedUser))
-    fetchExpenses()
-    fetchGroups()
-  }, [navigate])
-
-  const fetchGroups = async () => {
+  // Memoized callbacks
+  const fetchGroups = useMemoizedCallback(async () => {
     try {
+      setGroupsLoading(true)
       const data = await groupService.getGroups()
-      setGroups(data)
+      const groupsArray = data?.items || data || []
+      setGroups(Array.isArray(groupsArray) ? groupsArray : [])
     } catch (error) {
       console.error('Error fetching groups:', error)
       toast.error('Failed to load groups')
+    } finally {
+      setGroupsLoading(false)
     }
-  }
+  }, [])
 
-  const fetchExpenses = async () => {
+  const fetchExpenses = useMemoizedCallback(async () => {
     try {
+      setLoading(true)
       const data = await expenseService.getExpenses()
-      setExpenses(data)
+      const expensesArray = data?.items || data || []
+      setExpenses(Array.isArray(expensesArray) ? expensesArray : [])
       await fetchStats()
     } catch (error) {
       console.error('Error fetching expenses:', error)
       toast.error('Failed to load expenses')
+      setExpenses([]) // Reset on error
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const fetchStats = async () => {
+  const fetchStats = useMemoizedCallback(async () => {
     try {
-      const s = await expenseService.getExpenseStats()
-      setStats(s)
+      setStatsLoading(true)
+      const balanceData = await expenseService.getUserBalance()
+      setStats({
+        totalSpent: balanceData.groupBalances?.reduce((sum, g) => sum + Math.abs(Number(g.balance) || 0), 0) || 0,
+        totalOwed: Number(balanceData.totalOwed) || 0,
+        totalReceived: Number(balanceData.totalToReceive) || 0
+      })
     } catch (error) {
       console.error('Error fetching stats:', error)
       setStats({ totalSpent: 0, totalOwed: 0, totalReceived: 0 })
+    } finally {
+      setStatsLoading(false)
     }
-  }
+  }, [])
 
-  const calculateStats = (expenses) => {
-    try {
-      const totalSpent = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
-      const totalOwed = expenses.reduce((sum, expense) => {
-        if (expense.paidBy !== user?.email) {
-          return sum + Number(expense.amount) / expense.splitBetween.length
-        }
-        return sum
-      }, 0)
-      const totalReceived = expenses.reduce((sum, expense) => {
-        if (expense.paidBy === user?.email) {
-          return sum + Number(expense.amount) - (Number(expense.amount) / expense.splitBetween.length)
-        }
-        return sum
-      }, 0)
-
-      setStats({
-        totalSpent: Number(totalSpent.toFixed(2)),
-        totalOwed: Number(totalOwed.toFixed(2)),
-        totalReceived: Number(totalReceived.toFixed(2)),
-      })
-    } catch (error) {
-      console.error('Error calculating stats:', error)
-      setStats({ totalSpent: 0, totalOwed: 0, totalReceived: 0 })
+  const handleDeleteExpense = useMemoizedCallback(async (expenseId) => {
+    if (!confirm('Are you sure you want to delete this expense?')) {
+      return
     }
-  }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login')
-  }
-
-  const handleAddExpense = async (expense) => {
-    try {
-      const created = await expenseService.createExpense(expense)
-      setExpenses([created, ...expenses])
-      await fetchStats()
-      toast.success('Expense added successfully')
-    } catch (error) {
-      console.error('Error adding expense:', error)
-      toast.error('Failed to add expense')
-    }
-  }
-
-  const handleEditExpense = async (expense) => {
-    try {
-      const updated = await expenseService.updateExpense(expense._id, expense)
-      setExpenses(expenses.map((e) => (e._id === updated._id ? updated : e)))
-      await fetchStats()
-      toast.success('Expense updated successfully')
-    } catch (error) {
-      console.error('Error updating expense:', error)
-      toast.error('Failed to update expense')
-    }
-  }
-
-  const handleDeleteExpense = async (expenseId) => {
     try {
       await expenseService.deleteExpense(expenseId)
-      const updatedExpenses = expenses.filter((e) => e._id !== expenseId)
-      setExpenses(updatedExpenses)
-      await fetchStats()
       toast.success('Expense deleted successfully')
+      fetchExpenses()
     } catch (error) {
       console.error('Error deleting expense:', error)
       toast.error('Failed to delete expense')
     }
-  }
+  }, [fetchExpenses])
 
-  const handleAddGroup = (e) => {
-    e.preventDefault()
-    // Add group logic here
-  }
+  const handleEditExpense = useMemoizedCallback((expense) => {
+    setEditingExpense(expense)
+    setShowExpenseForm(true)
+  }, [])
 
-  const filteredExpenses = expenses.filter(expense => {
-    const groupName = groups.find(g => g._id === expense.groupId)?.name || ''
-    const matchesSearch = expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         groupName.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesCategory = selectedCategory === 'all' || expense.category === selectedCategory
-    return matchesSearch && matchesCategory
-  })
+  const handleExpenseCreated = useMemoizedCallback(() => {
+    fetchExpenses()
+    setEditingExpense(null)
+    setShowExpenseForm(false)
+  }, [fetchExpenses])
 
-  if (!user) {
-    return null
-  }
+  useEffect(() => {
+    // Wait for auth hydration before deciding redirect/fetch
+    if (authLoading) {
+      return
+    }
 
-  if (loading) {
+    if (!isAuthenticated) {
+      navigate('/login')
+      return
+    }
+
+    if (!user) {
+      return
+    }
+
+    fetchExpenses()
+    fetchGroups()
+  }, [user, isAuthenticated, authLoading, navigate, fetchExpenses, fetchGroups])
+
+  // Cleanup effect to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      setExpenses([])
+      setGroups([])
+    }
+  }, [])
+
+  if (loading && expenses.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50">
+        <div className="container mx-auto px-4 py-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            {[...Array(3)].map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        </div>
       </div>
     )
   }
-  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50">
-      {/* Navbar with Glassmorphism */}
-      <nav className="backdrop-blur-lg bg-white/70 border-b border-neutral-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            {/* Logo with Animation */}
-            <div className="flex items-center space-x-2 group">
-              <div className="bg-gradient-to-br from-teal-500 to-emerald-600 p-2 rounded-lg transform group-hover:scale-110 transition-all duration-300">
-                <FaChartPie className="h-5 w-5 text-white" />
-              </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-teal-600 to-emerald-600 bg-clip-text text-transparent">Splitzy</span>
+      {/* Header */}
+      <div className="bg-white/80 backdrop-blur-lg border-b border-neutral-200 sticky top-0 z-40">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-neutral-900">Dashboard</h1>
+              <p className="text-sm text-neutral-600">Welcome back, {user?.name}</p>
             </div>
-
-            {/* User Profile with Enhanced Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center space-x-3 focus:outline-none group"
+            
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={() => navigate('/groups')}
+                variant="secondary"
+                size="sm"
               >
-                <div className="text-right">
-                  <p className="text-sm font-medium text-neutral-800 group-hover:text-teal-600 transition-colors">{user?.name}</p>
-                  <p className="text-xs text-neutral-500">View Profile</p>
-                </div>
-                <div className="relative">
-                  <img
-                    src={user?.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user?.name || 'User')}
-                    alt="User Avatar"
-                    className="h-9 w-9 rounded-full ring-2 ring-neutral-100 group-hover:ring-teal-100 transition-all"
-                  />
-                  <div className="absolute -bottom-1 -right-1 h-3 w-3 bg-amber-500 rounded-full border-2 border-white"></div>
-                </div>
-                <ChevronDown className={`h-4 w-4 text-neutral-400 transition-transform duration-200 ${showUserMenu ? 'rotate-180' : ''}`} />
-              </button>
-
-              {/* Enhanced Dropdown Menu */}
-              {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-56 bg-white/80 backdrop-blur-lg rounded-xl shadow-lg py-1 z-10 border border-neutral-200 transform origin-top-right transition-all duration-200">
-                  <button
-                    onClick={() => {/* Handle profile */}}
-                    className="flex items-center w-full px-4 py-2.5 text-sm text-neutral-700 hover:bg-teal-50 transition-colors"
-                  >
-                    <User className="h-4 w-4 mr-2 text-teal-600" />
-                    Profile
-                  </button>
-                  <button
-                    onClick={() => {/* Handle settings */}}
-                    className="flex items-center w-full px-4 py-2.5 text-sm text-neutral-700 hover:bg-teal-50 transition-colors"
-                  >
-                    <Settings className="h-4 w-4 mr-2 text-teal-600" />
-                    Settings
-                  </button>
-                  <div className="border-t border-neutral-200 my-1"></div>
-                  <button
-                    onClick={handleLogout}
-                    className="flex items-center w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                  >
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-6 border border-neutral-200 hover:border-teal-100 transition-all duration-300 hover:shadow-lg hover:shadow-teal-100 group">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-neutral-600">Total Spent</p>
-                <p className="text-2xl font-bold text-neutral-900 mt-1 group-hover:text-teal-600 transition-colors">
-                  ₹{stats.totalSpent.toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-gradient-to-br from-teal-500 to-emerald-600 p-3 rounded-xl transform group-hover:scale-110 transition-all duration-300">
-                <FaMoneyBillWave className="h-6 w-6 text-white" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-center">
-              <span className="text-sm text-amber-600 font-medium flex items-center">
-                <TrendingUp className="h-4 w-4 mr-1" />
-                12%
-              </span>
-              <span className="text-sm text-neutral-500 ml-1">from last month</span>
-            </div>
-          </div>
-
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-6 border border-neutral-200 hover:border-teal-100 transition-all duration-300 hover:shadow-lg hover:shadow-teal-100 group">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-neutral-600">You Owe</p>
-                <p className="text-2xl font-bold text-red-600 mt-1 group-hover:text-teal-600 transition-colors">
-                  ₹{stats.totalOwed.toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-gradient-to-br from-teal-500 to-emerald-600 p-3 rounded-xl transform group-hover:scale-110 transition-all duration-300">
-                <FaMoneyBillWave className="h-6 w-6 text-white" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <span className="text-sm text-neutral-500">Across all groups</span>
-            </div>
-          </div>
-
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-6 border border-neutral-200 hover:border-teal-100 transition-all duration-300 hover:shadow-lg hover:shadow-teal-100 group">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-neutral-600">You're Owed</p>
-                <p className="text-2xl font-bold text-green-600 mt-1 group-hover:text-teal-600 transition-colors">
-                  ₹{stats.totalReceived.toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-gradient-to-br from-teal-500 to-emerald-600 p-3 rounded-xl transform group-hover:scale-110 transition-all duration-300">
-                <FaMoneyBillWave className="h-6 w-6 text-white" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <span className="text-sm text-teal-600 font-medium flex items-center">
-                <AlertCircle className="h-4 w-4 mr-1" />
-                2 pending settlements
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <button 
-            onClick={() => {
-              setEditingExpense(null)
-              setShowExpenseForm(true)
-            }}
-            className="bg-gradient-to-br from-teal-500 to-emerald-600 text-white p-4 rounded-xl flex items-center justify-center space-x-2 hover:shadow-lg hover:shadow-teal-200 transition-all duration-300 transform hover:scale-105"
-          >
-            <FaPlus className="h-5 w-5" />
-            <span>Add Expense</span>
-          </button>
-          <button 
-            onClick={() => navigate('/groups')}
-            className="bg-white text-teal-600 p-4 rounded-xl flex items-center justify-center space-x-2 border border-teal-100 hover:border-teal-200 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300 transform hover:scale-105"
-          >
-            <FaUsers className="h-5 w-5" />
-            <span>Create Group</span>
-          </button>
-          <button className="bg-white text-teal-600 p-4 rounded-xl flex items-center justify-center space-x-2 border border-teal-100 hover:border-teal-200 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300 transform hover:scale-105">
-            <BarChart3 className="h-5 w-5" />
-            <span>View Reports</span>
-          </button>
-          <button
-            onClick={() => navigate('/analytics')}
-            className="bg-white text-teal-600 p-4 rounded-xl flex items-center justify-center space-x-2 border border-teal-100 hover:border-teal-200 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300 transform hover:scale-105"
-          >
-            <BarChart2 className="h-5 w-5" />
-            <span>Analytics</span>
-          </button>
-        </div>
-
-        {/* Tabs with Enhanced Design */}
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl border border-neutral-200 mb-8 overflow-hidden">
-          <div className="border-b border-neutral-200">
-            <nav className="flex space-x-8 px-6" aria-label="Tabs">
-              <button
-                onClick={() => setActiveTab('expenses')}
-                className={`${
-                  activeTab === 'expenses'
-                    ? 'border-teal-500 text-teal-600'
-                    : 'border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-all duration-200`}
-              >
-                <FaMoneyBillWave className="mr-2" />
-                Expenses
-              </button>
-              <button
-                onClick={() => setActiveTab('groups')}
-                className={`${
-                  activeTab === 'groups'
-                    ? 'border-teal-500 text-teal-600'
-                    : 'border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center transition-all duration-200`}
-              >
-                <FaUsers className="mr-2" />
+                <Users size={16} className="mr-2" />
                 Groups
-              </button>
-            </nav>
+              </Button>
+              <Button
+                onClick={() => setShowExpenseForm(true)}
+                size="sm"
+              >
+                <Plus size={16} className="mr-2" />
+                Add Expense
+              </Button>
+            </div>
           </div>
+        </div>
+      </div>
 
-          {/* Content with Enhanced Cards */}
-          <div className="p-6">
-            {activeTab === 'expenses' ? (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h2 className="text-xl font-bold text-neutral-900">Recent Expenses</h2>
-                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                    <div className="relative flex-1 sm:flex-none">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
-                      <input
-                        type="text"
-                        placeholder="Search expenses..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 rounded-xl border border-neutral-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all outline-none"
-                      />
-                    </div>
-                    <select
-                      value={selectedCategory}
-                      onChange={(e) => setSelectedCategory(e.target.value)}
-                      className="px-4 py-2 rounded-xl border border-neutral-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all outline-none"
-                    >
-                      <option value="all">All Categories</option>
-                      <option value="food">Food & Dining</option>
-                      <option value="transport">Transportation</option>
-                      <option value="accommodation">Accommodation</option>
-                      <option value="entertainment">Entertainment</option>
-                      <option value="shopping">Shopping</option>
-                      <option value="utilities">Utilities</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Expenses List */}
-                <div className="bg-white rounded-2xl shadow-sm border border-neutral-200">
-                  <div className="p-6 border-b border-neutral-200">
-                    <h2 className="text-xl font-semibold text-neutral-900">Recent Expenses</h2>
-                  </div>
-                  <div className="divide-y divide-neutral-200">
-                    {filteredExpenses.length === 0 ? (
-                      <div className="px-6 py-4 text-center text-gray-500">
-                        No expenses yet. Add your first expense!
-                      </div>
+      <div className="container mx-auto px-4 py-8">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <Card variant="elevated">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-neutral-600">Total Spent</p>
+                  <p className="text-2xl font-bold text-neutral-900 mt-1">
+                    {statsLoading ? (
+                      <LoadingSpinner size="sm" />
                     ) : (
-                      filteredExpenses.slice(0, 5).map((expense) => (
-                        <div key={expense._id} className="p-6 flex items-center justify-between">
-                          <div>
-                            <h3 className="font-medium text-neutral-900">{expense.description}</h3>
-                            <p className="text-sm text-neutral-600">
-                              {groups.find(g => g._id === expense.groupId)?.name || 'Ungrouped'} • {new Date(expense.date || expense.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            <span className="font-medium text-neutral-900">
-                              ₹{Number(expense.amount).toFixed(2)}
-                            </span>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => {
-                                  setEditingExpense(expense)
-                                  setShowExpenseForm(true)
-                                }}
-                                className="p-2 text-neutral-600 hover:text-teal-600 transition-colors"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => handleDeleteExpense(expense._id)}
-                                className="p-2 text-neutral-600 hover:text-red-600 transition-colors"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))
+                      formatCurrency(stats.totalSpent)
                     )}
-                  </div>
+                  </p>
+                </div>
+                <div className="p-3 bg-teal-100 rounded-full">
+                  <CreditCard className="w-6 h-6 text-teal-600" />
                 </div>
               </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-xl font-bold text-neutral-900">Your Groups</h2>
-                  <button
-                    onClick={() => {/* Handle create group */}}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-xl text-white bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-all duration-300 transform hover:scale-105"
-                  >
-                    <FaPlus className="mr-2" />
-                    Create Group
-                  </button>
-                </div>
+            </CardContent>
+          </Card>
 
-                {/* Enhanced Group Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {groups.map((group) => (
-                    <div key={group.id} className="bg-white rounded-xl border border-neutral-200 p-6 hover:border-teal-100 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300 group">
-                      <div className="flex items-center justify-between mb-4">
-                        <h4 className="text-lg font-medium text-neutral-900 group-hover:text-teal-600 transition-colors">{group.name}</h4>
-                        <span className="px-3 py-1 text-sm font-medium text-teal-600 bg-teal-50 rounded-full">
-                          {group.members.length} members
-                        </span>
-                      </div>
-                      <div className="space-y-4">
-                        <div className="flex items-center text-neutral-600">
-                          <CreditCard className="h-5 w-5 mr-2 text-teal-600" />
-                          <span>Total: ₹{group.totalExpenses}</span>
-                        </div>
-                        <div className="flex items-center text-neutral-600">
-                          <Activity className="h-5 w-5 mr-2 text-teal-600" />
-                          <span>Last activity: {group.lastActivity}</span>
-                        </div>
-                      </div>
-                      <div className="mt-6 flex justify-end">
-                        <button
-                          onClick={() => {/* Handle view group */}}
-                          className="inline-flex items-center text-sm font-medium text-teal-600 hover:text-teal-700 transition-colors group-hover:scale-105 transform"
-                        >
-                          View Details
-                          <ArrowRight className="ml-1 h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
+          <Card variant="elevated">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-neutral-600">You Owe</p>
+                  <p className="text-2xl font-bold text-red-600 mt-1 flex items-center">
+                    {statsLoading ? (
+                      <LoadingSpinner size="sm" />
+                    ) : (
+                      <>
+                        <ArrowDownRight size={20} className="mr-1" />
+                        {formatCurrency(stats.totalOwed)}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="p-3 bg-red-100 rounded-full">
+                  <ArrowDownRight className="w-6 h-6 text-red-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card variant="elevated">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-neutral-600">You're Owed</p>
+                  <p className="text-2xl font-bold text-green-600 mt-1 flex items-center">
+                    {statsLoading ? (
+                      <LoadingSpinner size="sm" />
+                    ) : (
+                      <>
+                        <ArrowUpRight size={20} className="mr-1" />
+                        {formatCurrency(stats.totalReceived)}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="p-3 bg-green-100 rounded-full">
+                  <ArrowUpRight className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filters and Search */}
+        <div className="flex flex-col lg:flex-row gap-4 mb-8">
+          <div className="flex-1">
+            <Input
+              placeholder="Search expenses..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              icon={<Search size={16} />}
+            />
+          </div>
+          
+          <div className="flex gap-3">
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="px-4 py-2.5 border border-neutral-200 rounded-xl bg-white/80 backdrop-blur-sm text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            >
+              <option value="all">All Categories</option>
+              {categories.map(category => (
+                <option key={category} value={category}>
+                  {category.charAt(0).toUpperCase() + category.slice(1)}
+                </option>
+              ))}
+            </select>
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSearchQuery('')
+                setSelectedCategory('all')
+              }}
+            >
+              <Filter size={16} className="mr-2" />
+              Clear
+            </Button>
+          </div>
+        </div>
+
+        {/* Expenses List */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-neutral-900">
+              Recent Expenses
+              <span className="text-sm font-normal text-neutral-600 ml-2">
+                ({filteredExpenses.length} {filteredExpenses.length === 1 ? 'expense' : 'expenses'})
+              </span>
+            </h2>
+            
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate('/analytics')}
+            >
+              <TrendingUp size={16} className="mr-2" />
+              View Analytics
+            </Button>
+          </div>
+
+          {filteredExpenses.length === 0 ? (
+            <EmptyState
+              title={debouncedSearchQuery || selectedCategory !== 'all' ? 'No expenses found' : 'No expenses yet'}
+              description={
+                debouncedSearchQuery || selectedCategory !== 'all'
+                  ? 'Try adjusting your filters or search terms'
+                  : 'Start by adding your first expense to track your spending'
+              }
+              action={
+                debouncedSearchQuery || selectedCategory !== 'all' ? null : (
+                  <Button onClick={() => setShowExpenseForm(true)}>
+                    <Plus size={16} className="mr-2" />
+                    Add First Expense
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              {/* Use regular grid for small lists, virtual list for large lists */}
+              {filteredExpenses.length <= 50 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredExpenses.map((expense) => (
+                    <ExpenseCard
+                      key={expense._id}
+                      expense={expense}
+                      onEdit={() => handleEditExpense(expense)}
+                      onDelete={() => handleDeleteExpense(expense._id)}
+                    />
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
+              ) : (
+                <div className="border border-neutral-200 rounded-2xl bg-white/50 backdrop-blur-sm">
+                  <VirtualList
+                    items={filteredExpenses}
+                    itemHeight={200}
+                    containerHeight={600}
+                    renderItem={(expense) => (
+                      <div className="p-4">
+                        <ExpenseCard
+                          expense={expense}
+                          onEdit={() => handleEditExpense(expense)}
+                          onDelete={() => handleDeleteExpense(expense._id)}
+                        />
+                      </div>
+                    )}
+                    className="p-2"
+                  />
+                </div>
+              )}
+              
+              {/* Show count for large lists */}
+              {filteredExpenses.length > 50 && (
+                <div className="text-center text-sm text-neutral-600 mt-4">
+                  Showing {filteredExpenses.length} expenses
+                </div>
+              )}
+            </>
+          )}
         </div>
-
-        {/* Loading State */}
-        {loading && (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div>
-          </div>
-        )}
-
-        {/* Expense Form Modal */}
-        <ExpenseForm
-          isOpen={showExpenseForm}
-          onClose={() => {
-            setShowExpenseForm(false)
-            setEditingExpense(null)
-          }}
-          onSubmit={editingExpense ? handleEditExpense : handleAddExpense}
-          initialData={editingExpense}
-          groups={groups}
-        />
       </div>
+
+      {/* Expense Form Modal */}
+      <AdvancedExpenseForm
+        isOpen={showExpenseForm}
+        onClose={() => {
+          setShowExpenseForm(false)
+          setEditingExpense(null)
+        }}
+        onExpenseCreated={handleExpenseCreated}
+        editingExpense={editingExpense}
+      />
     </div>
   )
 }
 
-export default Dashboard 
+export default Dashboard

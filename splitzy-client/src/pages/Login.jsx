@@ -4,7 +4,7 @@ import { toast } from 'react-hot-toast'
 import { FaChartPie } from 'react-icons/fa'
 import { Eye, EyeOff } from 'lucide-react'
 import { authService } from '../services/authService'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth } from '../hooks/useAuth.js'
 
 const Login = () => {
   const navigate = useNavigate()
