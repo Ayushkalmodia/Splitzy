@@ -1,29 +1,10 @@
-import axios from 'axios'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5050/api'
-
-// Create axios instance with auth header
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-})
-
-// Add auth token to requests
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+import { api } from '../lib/api.js'
 
 export const expenseService = {
   // Get all expenses
-  getExpenses: async () => {
+  getExpenses: async (params = {}) => {
     try {
-      const response = await api.get('/expenses')
+      const response = await api.get('/expenses', { params })
       return response.data
     } catch (error) {
       throw error.response?.data || error.message
@@ -31,9 +12,9 @@ export const expenseService = {
   },
 
   // Get expenses by group
-  getExpensesByGroup: async (groupId) => {
+  getExpensesByGroup: async (groupId, params = {}) => {
     try {
-      const response = await api.get(`/expenses/group/${groupId}`)
+      const response = await api.get(`/expenses/group/${groupId}`, { params })
       return response.data
     } catch (error) {
       throw error.response?.data || error.message
@@ -71,9 +52,19 @@ export const expenseService = {
   },
 
   // Get expense statistics
-  getExpenseStats: async () => {
+  getExpenseStats: async (params = {}) => {
     try {
-      const response = await api.get('/expenses/stats')
+      const response = await api.get('/expenses/stats', { params })
+      return response.data
+    } catch (error) {
+      throw error.response?.data || error.message
+    }
+  },
+
+  // Get user balance
+  getUserBalance: async () => {
+    try {
+      const response = await api.get('/expenses/balance')
       return response.data
     } catch (error) {
       throw error.response?.data || error.message

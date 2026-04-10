@@ -3,12 +3,27 @@ import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import User from '../models/User.js'
 
-const signToken = (user) => {
-  return jwt.sign(
-    { id: user._id, email: user.email, name: user.name },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  )
+const ACCESS_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m'
+const REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d'
+
+const signAccessToken = (user) =>
+  jwt.sign({ id: user._id, email: user.email, name: user.name, role: user.role }, process.env.JWT_SECRET, {
+    expiresIn: ACCESS_EXPIRES_IN
+  })
+
+const signRefreshToken = (user) =>
+  jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, {
+    expiresIn: REFRESH_EXPIRES_IN
+  })
+
+const setRefreshCookie = (res, token) => {
+  const isProd = process.env.NODE_ENV === 'production'
+  res.cookie('refreshToken', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProd,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  })
 }
 
 export const register = async (req, res) => {
@@ -23,10 +38,14 @@ export const register = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10)
     const user = await User.create({ name, email, passwordHash })
 
-    const token = signToken(user)
+    const accessToken = signAccessToken(user)
+    const refreshToken = signRefreshToken(user)
+    user.refreshTokens = [...(user.refreshTokens || []), refreshToken]
+    await user.save()
+    setRefreshCookie(res, refreshToken)
     return res.status(201).json({
-      token,
-      user: { id: user._id, name: user.name, email: user.email }
+      token: accessToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role }
     })
   } catch (err) {
     return res.status(500).json({ message: err.message })
@@ -43,10 +62,14 @@ export const login = async (req, res) => {
     const ok = await bcrypt.compare(password, user.passwordHash)
     if (!ok) return res.status(401).json({ message: 'Invalid credentials' })
 
-    const token = signToken(user)
+    const accessToken = signAccessToken(user)
+    const refreshToken = signRefreshToken(user)
+    user.refreshTokens = [...(user.refreshTokens || []), refreshToken]
+    await user.save()
+    setRefreshCookie(res, refreshToken)
     return res.json({
-      token,
-      user: { id: user._id, name: user.name, email: user.email }
+      token: accessToken,
+      user: { id: user._id, name: user.name, email: user.email, role: user.role }
     })
   } catch (err) {
     return res.status(500).json({ message: err.message })
@@ -85,6 +108,52 @@ export const resetPassword = async (req, res) => {
     await user.save()
 
     return res.json({ message: 'Password reset successful' })
+  } catch (err) {
+    return res.status(500).json({ message: err.message })
+  }
+}
+
+export const refresh = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken
+    if (!token) return res.status(401).json({ message: 'No refresh token' })
+
+    const payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET)
+    const user = await User.findById(payload.id)
+    if (!user) return res.status(401).json({ message: 'Invalid token' })
+    const stored = (user.refreshTokens || []).includes(token)
+    if (!stored) return res.status(401).json({ message: 'Invalid token' })
+
+    // rotate refresh token
+    const newRefresh = signRefreshToken(user)
+    user.refreshTokens = user.refreshTokens.filter((t) => t !== token).concat(newRefresh)
+    await user.save()
+    setRefreshCookie(res, newRefresh)
+
+    const accessToken = signAccessToken(user)
+    return res.json({ token: accessToken })
+  } catch (err) {
+    return res.status(401).json({ message: 'Unauthorized' })
+  }
+}
+
+export const logout = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken
+    if (token) {
+      try {
+        const payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET)
+        const user = await User.findById(payload.id)
+        if (user) {
+          user.refreshTokens = (user.refreshTokens || []).filter((t) => t !== token)
+          await user.save()
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+    res.clearCookie('refreshToken')
+    return res.json({ message: 'Logged out' })
   } catch (err) {
     return res.status(500).json({ message: err.message })
   }

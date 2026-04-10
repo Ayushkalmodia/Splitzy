@@ -15,7 +15,6 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
   })
 
   const [selectedGroupMembers, setSelectedGroupMembers] = useState([])
-  const [splitAmounts, setSplitAmounts] = useState({})
   const currentUser = authService.getCurrentUser()
 
   const categories = [
@@ -34,13 +33,6 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
       const group = groups.find(g => g._id === formData.group)
       if (group) {
         setSelectedGroupMembers(group.members)
-        // Initialize split amounts for equal split (not persisted; backend uses equal split implicitly)
-        const equalAmount = formData.amount ? (formData.amount / group.members.length).toFixed(2) : 0
-        const initialSplitAmounts = {}
-        group.members.forEach(member => {
-          initialSplitAmounts[member] = equalAmount
-        })
-        setSplitAmounts(initialSplitAmounts)
         // Default paidBy to current user if present in group, otherwise first member
         if (currentUser?.email && group.members.includes(currentUser.email)) {
           setFormData((prev) => ({ ...prev, paidBy: currentUser.email }))
@@ -50,30 +42,8 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
       }
     } else {
       setSelectedGroupMembers([])
-      setSplitAmounts({})
     }
-  }, [formData.group, formData.amount, groups])
-
-  // Update split amounts when amount or split type changes
-  useEffect(() => {
-    if (formData.amount && selectedGroupMembers.length > 0) {
-      if (formData.splitType === 'equal') {
-        const equalAmount = (formData.amount / selectedGroupMembers.length).toFixed(2)
-        const newSplitAmounts = {}
-        selectedGroupMembers.forEach(member => {
-          newSplitAmounts[member] = equalAmount
-        })
-        setSplitAmounts(newSplitAmounts)
-      }
-    }
-  }, [formData.amount, formData.splitType, selectedGroupMembers])
-
-  const handleSplitAmountChange = (member, value) => {
-    setSplitAmounts(prev => ({
-      ...prev,
-      [member]: value
-    }))
-  }
+  }, [formData.group, formData.amount, formData.paidBy, groups, currentUser?.email])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -112,10 +82,6 @@ const ExpenseForm = ({ isOpen, onClose, onSubmit, initialData = null, groups = [
       paidBy: selectedGroup?.members?.[0] || "",
     }))
   }
-
-  console.log("groups data 👉", groups);
-console.log("selected group id 👉", formData.group);
-
 
   if (!isOpen) return null
 

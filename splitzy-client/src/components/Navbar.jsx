@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { FaChartPie } from 'react-icons/fa'
 import { 
   ChevronDown, 
@@ -9,17 +9,15 @@ import {
   Menu,
   X
 } from 'lucide-react'
-import { authService } from '../services/authService'
+import { useAuth } from '../hooks/useAuth'
 
 const Navbar = () => {
-  const navigate = useNavigate()
+  const { user, logout } = useAuth()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
-  const user = authService.getCurrentUser()
 
   const handleLogout = () => {
-    authService.logout()
-    navigate('/login')
+    logout()
   }
 
   const navigation = [

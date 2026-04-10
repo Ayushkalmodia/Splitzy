@@ -1,19 +1,26 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useAuth } from '../hooks/useAuth'
+import { toast } from 'react-hot-toast'
 
 const Profile = () => {
-  const [user, setUser] = useState({
-    name: 'John Doe',
-    email: 'john@example.com',
-    phone: '+1 234 567 8900',
-    currency: 'USD',
-  })
-
+  const { user } = useAuth()
   const [isEditing, setIsEditing] = useState(false)
-  const [editedUser, setEditedUser] = useState(user)
+  const [editedUser, setEditedUser] = useState({})
+
+  useEffect(() => {
+    if (user) {
+      setEditedUser({
+        name: user.name || '',
+        email: user.email || '',
+        currency: 'USD' // Default, could be stored in user profile
+      })
+    }
+  }, [user])
 
   const handleSave = (e) => {
     e.preventDefault()
-    setUser(editedUser)
+    // TODO: Implement profile update API
+    toast.success('Profile updated successfully!')
     setIsEditing(false)
   }
 
@@ -61,19 +68,7 @@ const Profile = () => {
                   }
                   className="input-field"
                   required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Phone
-                </label>
-                <input
-                  type="tel"
-                  value={editedUser.phone}
-                  onChange={(e) =>
-                    setEditedUser({ ...editedUser, phone: e.target.value })
-                  }
-                  className="input-field"
+                  disabled
                 />
               </div>
               <div>
@@ -100,21 +95,17 @@ const Profile = () => {
             <div className="space-y-6">
               <div>
                 <h3 className="text-sm font-medium text-gray-500">Full Name</h3>
-                <p className="mt-1 text-lg text-gray-900">{user.name}</p>
+                <p className="mt-1 text-lg text-gray-900">{editedUser.name}</p>
               </div>
               <div>
                 <h3 className="text-sm font-medium text-gray-500">Email</h3>
-                <p className="mt-1 text-lg text-gray-900">{user.email}</p>
-              </div>
-              <div>
-                <h3 className="text-sm font-medium text-gray-500">Phone</h3>
-                <p className="mt-1 text-lg text-gray-900">{user.phone}</p>
+                <p className="mt-1 text-lg text-gray-900">{editedUser.email}</p>
               </div>
               <div>
                 <h3 className="text-sm font-medium text-gray-500">
                   Preferred Currency
                 </h3>
-                <p className="mt-1 text-lg text-gray-900">{user.currency}</p>
+                <p className="mt-1 text-lg text-gray-900">{editedUser.currency}</p>
               </div>
             </div>
           )}

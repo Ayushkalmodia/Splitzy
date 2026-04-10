@@ -1,0 +1,180 @@
+import Joi from 'joi'
+
+// User validation schemas
+export const userRegistrationSchema = Joi.object({
+  name: Joi.string().trim().min(2).max(50).required(),
+  email: Joi.string().email().required(),
+  password: Joi.string().min(6).required()
+})
+
+export const userLoginSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().required()
+})
+
+// Group validation schemas
+export const createGroupSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(100).required(),
+  description: Joi.string().trim().max(500).optional(),
+  members: Joi.array().items(
+    Joi.object({
+      userId: Joi.string().optional(),
+      email: Joi.string().email().optional(),
+      tempName: Joi.string().trim().min(1).max(50).optional(),
+      role: Joi.string().valid('admin', 'member').default('member')
+    }).or('userId', 'email', 'tempName')
+  ).optional()
+})
+
+export const updateGroupSchema = Joi.object({
+  name: Joi.string().trim().min(1).max(100).optional(),
+  description: Joi.string().trim().max(500).optional(),
+  members: Joi.array().items(
+    Joi.object({
+      userId: Joi.string().optional(),
+      email: Joi.string().email().optional(),
+      tempName: Joi.string().trim().min(1).max(50).optional(),
+      role: Joi.string().valid('admin', 'member').optional()
+    }).or('userId', 'email', 'tempName')
+  ).optional()
+})
+
+export const inviteToGroupSchema = Joi.object({
+  emails: Joi.array().items(Joi.string().email()).min(1).max(10).required(),
+  message: Joi.string().trim().max(500).optional()
+})
+
+// Expense validation schemas
+export const createExpenseSchema = Joi.object({
+  description: Joi.string().trim().min(1).max(200).required(),
+  amount: Joi.number().positive().required(),
+  currency: Joi.string().length(3).default('USD'),
+  category: Joi.string().trim().default('other'),
+  date: Joi.date().optional(),
+  groupId: Joi.string().optional(),
+  paidBy: Joi.alternatives().try(
+    Joi.string().required(),
+    Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required()
+  ).required(),
+  splitType: Joi.string().valid('equal', 'unequal', 'percentage', 'shares', 'manual').default('equal'),
+  splits: Joi.array().items(
+    Joi.object({
+      userId: Joi.string().optional(),
+      email: Joi.string().email().optional(),
+      tempName: Joi.string().trim().min(1).max(50).optional(),
+      amount: Joi.number().min(0).optional(),
+      percentage: Joi.number().min(0).max(100).optional(),
+      shares: Joi.number().min(0).optional()
+    }).or('userId', 'email', 'tempName')
+  ).when('splitType', {
+    is: 'equal',
+    then: Joi.optional(),
+    otherwise: Joi.array().min(1).required()
+  }),
+  notes: Joi.string().trim().max(1000).allow('').optional(),
+  tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+  receiptImageUrl: Joi.string().uri().optional(),
+  // Backward compatibility
+  splitBetween: Joi.array().items(Joi.string().email()).optional()
+})
+
+export const updateExpenseSchema = Joi.object({
+  description: Joi.string().trim().min(1).max(200).optional(),
+  amount: Joi.number().positive().optional(),
+  currency: Joi.string().length(3).optional(),
+  category: Joi.string().trim().optional(),
+  date: Joi.date().optional(),
+  groupId: Joi.string().optional(),
+  paidBy: Joi.string().optional(),
+  splitType: Joi.string().valid('equal', 'unequal', 'percentage', 'shares', 'manual').optional(),
+  splits: Joi.array().items(
+    Joi.object({
+      userId: Joi.string().optional(),
+      email: Joi.string().email().optional(),
+      tempName: Joi.string().trim().min(1).max(50).optional(),
+      amount: Joi.number().min(0).optional(),
+      percentage: Joi.number().min(0).max(100).optional(),
+      shares: Joi.number().min(0).optional()
+    }).or('userId', 'email', 'tempName')
+  ).optional(),
+  notes: Joi.string().trim().max(1000).optional(),
+  tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+  receiptImageUrl: Joi.string().uri().optional(),
+  // Backward compatibility
+  splitBetween: Joi.array().items(Joi.string().email()).optional()
+})
+
+// Settlement validation schemas
+export const createSettlementSchema = Joi.object({
+  groupId: Joi.string().required(),
+  fromUser: Joi.string().required(),
+  toUser: Joi.string().required(),
+  amount: Joi.number().positive().required(),
+  currency: Joi.string().length(3).default('USD'),
+  method: Joi.string().valid('cash', 'manual', 'bank_transfer', 'digital').default('manual'),
+  notes: Joi.string().trim().max(500).optional()
+})
+
+export const updateSettlementSchema = Joi.object({
+  amount: Joi.number().positive().optional(),
+  currency: Joi.string().length(3).optional(),
+  method: Joi.string().valid('cash', 'manual', 'bank_transfer', 'digital').optional(),
+  notes: Joi.string().trim().max(500).optional(),
+  status: Joi.string().valid('pending', 'confirmed', 'cancelled').optional()
+})
+
+// Pagination validation
+export const paginationSchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  sort: Joi.string().default('createdAt:desc')
+})
+
+// Query validation for expenses
+export const expenseQuerySchema = paginationSchema.keys({
+  category: Joi.string().optional(),
+  from: Joi.date().optional(),
+  to: Joi.date().optional(),
+  q: Joi.string().trim().max(100).optional(),
+  groupId: Joi.string().optional()
+})
+
+// Validation middleware factory
+export const validate = (schema, property = 'body') => {
+  return (req, res, next) => {
+    const { error, value } = schema.validate(req[property], {
+      abortEarly: false,
+      stripUnknown: true,
+      convert: true
+    })
+
+    if (error) {
+      const errors = error.details.map(detail => ({
+        field: detail.path.join('.'),
+        message: detail.message
+      }))
+      return res.status(400).json({
+        message: 'Validation failed',
+        errors
+      })
+    }
+
+    req[property] = value
+    next()
+  }
+}
+
+export default {
+  userRegistrationSchema,
+  userLoginSchema,
+  createGroupSchema,
+  updateGroupSchema,
+  inviteToGroupSchema,
+  createExpenseSchema,
+  updateExpenseSchema,
+  createSettlementSchema,
+  updateSettlementSchema,
+  paginationSchema,
+  expenseQuerySchema,
+  validate
+}

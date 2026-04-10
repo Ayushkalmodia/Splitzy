@@ -4,9 +4,11 @@ import { toast } from 'react-hot-toast'
 import { FaChartPie } from 'react-icons/fa'
 import { Eye, EyeOff } from 'lucide-react'
 import { authService } from '../services/authService'
+import { useAuth } from '../hooks/useAuth'
 
 const Register = () => {
   const navigate = useNavigate()
+  const { updateUser } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
@@ -42,9 +44,12 @@ const Register = () => {
       // Store token and user data
       localStorage.setItem('token', data.token)
       localStorage.setItem('user', JSON.stringify(data.user))
+      
+      // Update React authentication state immediately
+      updateUser(data.user)
 
       toast.success('Registration successful!')
-      navigate('/dashboard')
+      navigate('/dashboard', { replace: true })
     } catch (error) {
       const message = typeof error === 'string' ? error : (error.message || 'Registration failed')
       toast.error(message)

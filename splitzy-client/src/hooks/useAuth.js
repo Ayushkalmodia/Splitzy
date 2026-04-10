@@ -22,6 +22,7 @@ const readAuthFromStorage = () => {
   } catch (error) {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+
     return {
       user: null,
       isAuthenticated: false,
@@ -30,11 +31,8 @@ const readAuthFromStorage = () => {
   }
 }
 
-let authStore = {
-  user: null,
-  isAuthenticated: false,
-  loading: true
-}
+// IMPORTANT FIX: initialize from storage immediately
+let authStore = readAuthFromStorage()
 
 const listeners = new Set()
 
@@ -57,10 +55,11 @@ export const useAuth = () => {
 
   const updateUser = useCallback((userData) => {
     localStorage.setItem('user', JSON.stringify(userData))
-    const token = localStorage.getItem('token')
+
+    // IMPORTANT FIX: directly authenticate
     setAuthStore({
       user: userData,
-      isAuthenticated: Boolean(token),
+      isAuthenticated: true,
       loading: false
     })
   }, [])
@@ -71,10 +70,16 @@ export const useAuth = () => {
     }
 
     listeners.add(handleAuthChange)
+
+    // sync current state on mount
     forceAuthCheck()
 
     const onStorageChange = (event) => {
-      if (event.key === 'token' || event.key === 'user' || event.key === null) {
+      if (
+        event.key === 'token' ||
+        event.key === 'user' ||
+        event.key === null
+      ) {
         forceAuthCheck()
       }
     }
@@ -90,12 +95,14 @@ export const useAuth = () => {
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+
     setAuthStore({
       user: null,
       isAuthenticated: false,
       loading: false
     })
-    navigate('/login')
+
+    navigate('/login', { replace: true })
   }
 
   return {

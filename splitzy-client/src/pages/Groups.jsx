@@ -1,18 +1,24 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
-import { Plus, Users, UserPlus, Trash2, Edit2 } from 'lucide-react'
+import { Plus, Users, UserPlus, Trash2, Edit2, Settings, DollarSign, Calendar } from 'lucide-react'
 import { groupService } from '../services/groupService'
-import { authService } from '../services/authService'
+import GroupManagement from '../components/GroupManagement.jsx'
+import BalanceSummary from '../components/BalanceSummary.jsx'
+import SettlementModal from '../components/SettlementModal.jsx'
 
 const Groups = () => {
-  const navigate = useNavigate()
   const [groups, setGroups] = useState([])
   const [showGroupForm, setShowGroupForm] = useState(false)
   const [editingGroup, setEditingGroup] = useState(null)
+  const [selectedGroup, setSelectedGroup] = useState(null)
+  const [showManagement, setShowManagement] = useState(false)
+  const [showSettlements, setShowSettlements] = useState(false)
+  const [showBalances, setShowBalances] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [formData, setFormData] = useState({
     name: '',
-    members: ['']
+    description: '',
+    members: []
   })
 
   useEffect(() => {
@@ -20,228 +26,362 @@ const Groups = () => {
   }, [])
 
   const fetchGroups = async () => {
+    setLoading(true)
     try {
       const data = await groupService.getGroups()
-      setGroups(data)
+      // Handle various API response formats defensively
+      const groupsArray = data?.items || data || []
+      setGroups(Array.isArray(groupsArray) ? groupsArray : [])
     } catch (error) {
       toast.error('Failed to fetch groups')
       console.error('Error fetching groups:', error)
+      setGroups([])
+    } finally {
+      setLoading(false)
     }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
-      const me = authService.getCurrentUser()
       const payload = {
         name: formData.name,
-        members: Array.from(
-          new Set([
-            ...formData.members.filter((m) => m.trim() !== ''),
-            me?.email || ''
-          ].filter(Boolean))
-        )
+        description: formData.description,
+        members: formData.members.filter(m => m.email?.trim())
       }
+      
       if (editingGroup?._id) {
         const updated = await groupService.updateGroup(editingGroup._id, payload)
         setGroups(groups.map((g) => (g._id === editingGroup._id ? updated : g)))
         toast.success('Group updated successfully')
       } else {
         const created = await groupService.createGroup(payload)
-        setGroups([...groups, created])
+        setGroups([created, ...groups])
         toast.success('Group created successfully')
       }
+      
+      resetForm()
       setShowGroupForm(false)
       setEditingGroup(null)
-      setFormData({ name: '', members: [''] })
     } catch (error) {
-      toast.error(editingGroup ? 'Failed to update group' : 'Failed to create group')
-      console.error('Error handling group:', error)
+      toast.error(error.message || 'Failed to save group')
     }
+  }
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      description: '',
+      members: []
+    })
   }
 
   const handleDeleteGroup = async (groupId) => {
+    if (!confirm('Are you sure you want to delete this group? This action cannot be undone.')) {
+      return
+    }
+    
     try {
       await groupService.deleteGroup(groupId)
-      setGroups(groups.filter((g) => g._id !== groupId))
+      setGroups(groups.filter(g => g._id !== groupId))
       toast.success('Group deleted successfully')
     } catch (error) {
       toast.error('Failed to delete group')
-      console.error('Error deleting group:', error)
     }
   }
 
-  const handleEditGroup = (group) => {
-    setEditingGroup(group)
-    setFormData({
-      name: group.name,
-      members: [...group.members, '']
-    })
-    setShowGroupForm(true)
+  const openGroupManagement = (group) => {
+    setSelectedGroup(group)
+    setShowManagement(true)
+  }
+
+  const openSettlements = (group) => {
+    setSelectedGroup(group)
+    setShowSettlements(true)
+  }
+
+  const openBalances = (group) => {
+    setSelectedGroup(group)
+    setShowBalances(true)
+  }
+
+  const onGroupUpdated = () => {
+    fetchGroups()
+  }
+
+  const onSettlementCreated = () => {
+    // Refresh group data to recalculate balances
+    fetchGroups()
   }
 
   const addMemberField = () => {
-    setFormData({
-      ...formData,
-      members: [...formData.members, '']
-    })
+    setFormData(prev => ({
+      ...prev,
+      members: [...prev.members, { name: '', email: '', role: 'member' }]
+    }))
+  }
+
+  const updateMemberField = (index, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      members: prev.members.map((member, i) => 
+        i === index ? { ...member, [field]: value } : member
+      )
+    }))
   }
 
   const removeMemberField = (index) => {
-    setFormData({
-      ...formData,
-      members: formData.members.filter((_, i) => i !== index)
-    })
+    setFormData(prev => ({
+      ...prev,
+      members: prev.members.filter((_, i) => i !== index)
+    }))
   }
 
-  const updateMember = (index, value) => {
-    const newMembers = [...formData.members]
-    newMembers[index] = value
-    setFormData({
-      ...formData,
-      members: newMembers
-    })
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-emerald-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-neutral-900">Groups</h1>
-            <p className="text-neutral-600">Manage your expense groups</p>
-          </div>
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">My Groups</h1>
           <button
             onClick={() => {
-              const me = authService.getCurrentUser()
-              setFormData({ name: '', members: [me?.email || '', ''] })
+              resetForm()
               setEditingGroup(null)
               setShowGroupForm(true)
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 text-white rounded-xl hover:from-teal-600 hover:to-emerald-700 transition-all duration-300"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
           >
-            <Plus className="h-5 w-5" />
+            <Plus className="w-5 h-5" />
             Create Group
           </button>
         </div>
 
         {/* Groups Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {groups.map((group) => (
-            <div
-              key={group._id}
-              className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-6 hover:border-teal-100 hover:shadow-lg hover:shadow-teal-100 transition-all duration-300"
+        {groups.length === 0 ? (
+          <div className="text-center py-12">
+            <Users className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+            <h2 className="text-xl font-semibold text-gray-600 mb-2">No groups yet</h2>
+            <p className="text-gray-500 mb-6">Create your first group to start splitting expenses</p>
+            <button
+              onClick={() => setShowGroupForm(true)}
+              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
             >
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className="text-xl font-semibold text-neutral-900">{group.name}</h3>
-                  <p className="text-sm text-neutral-600">Created on {new Date(group.createdAt).toLocaleDateString()}</p>
+              Create Your First Group
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {groups.map((group) => (
+              <div key={group._id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">{group.name}</h3>
+                    {group.description && (
+                      <p className="text-sm text-gray-600 mt-1">{group.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openGroupManagement(group)}
+                      className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
+                      title="Manage Group"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteGroup(group._id)}
+                      className="p-2 text-red-400 hover:text-red-600 transition-colors"
+                      title="Delete Group"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleEditGroup(group)}
-                    className="p-2 text-neutral-600 hover:text-teal-600 transition-colors"
-                  >
-                    <Edit2 className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteGroup(group._id)}
-                    className="p-2 text-neutral-600 hover:text-red-600 transition-colors"
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </button>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Users className="w-4 h-4" />
+                    <span>{group.members?.length || 0} members</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Calendar className="w-4 h-4" />
+                    <span>Created {new Date(group.createdAt).toLocaleDateString()}</span>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => openBalances(group)}
+                        className="flex items-center justify-center gap-1 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm"
+                      >
+                        <DollarSign className="w-4 h-4" />
+                        Balances
+                      </button>
+                      <button
+                        onClick={() => openSettlements(group)}
+                        className="flex items-center justify-center gap-1 px-3 py-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm"
+                      >
+                        <Users className="w-4 h-4" />
+                        Settle
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-neutral-600">
-                  <Users className="h-5 w-5" />
-                  <span className="font-medium">Members:</span>
-                </div>
-                <ul className="space-y-1">
-                  {group.members.map((member, index) => (
-                    <li key={index} className="text-sm text-neutral-600">
-                      • {member === (authService.getCurrentUser()?.email) ? (authService.getCurrentUser()?.name || member) : member}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Group Form Modal */}
         {showGroupForm && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl w-full max-w-lg mx-auto">
-              <div className="p-6 border-b border-neutral-200 flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-neutral-900">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <div className="border-b px-6 py-4">
+                <h2 className="text-xl font-semibold">
                   {editingGroup ? 'Edit Group' : 'Create New Group'}
                 </h2>
-                <button
-                  onClick={() => {
-                    setShowGroupForm(false)
-                    setEditingGroup(null)
-                    setFormData({ name: '', members: [''] })
-                  }}
-                  className="p-2 hover:bg-neutral-100 rounded-lg transition-colors"
-                >
-                  ×
-                </button>
               </div>
-              <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-neutral-700">Group Name</label>
+
+              <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Group Name *
+                  </label>
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter group name"
-                    className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all outline-none"
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="e.g., Roommates, Trip to Paris"
                     required
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-neutral-700">Members</label>
-                  {formData.members.map((member, index) => (
-                    <div key={index} className="flex gap-2">
-                      <input
-                        type="text"
-                        value={member}
-                        onChange={(e) => updateMember(index, e.target.value)}
-                        placeholder="Enter member name"
-                        className="flex-1 px-4 py-2.5 rounded-xl border border-neutral-200 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all outline-none"
-                        required
-                      />
-                      {index > 0 && (
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    rows={3}
+                    placeholder="What's this group for?"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Members (optional)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={addMemberField}
+                      className="text-blue-600 hover:text-blue-700 text-sm"
+                    >
+                      + Add Member
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    {formData.members.map((member, index) => (
+                      <div key={index} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={member.name}
+                          onChange={(e) => updateMemberField(index, 'name', e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Name"
+                        />
+                        <input
+                          type="email"
+                          value={member.email}
+                          onChange={(e) => updateMemberField(index, 'email', e.target.value)}
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Email (optional)"
+                        />
                         <button
                           type="button"
                           onClick={() => removeMemberField(index)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                          className="p-2 text-red-500 hover:text-red-700"
                         >
-                          <Trash2 className="h-5 w-5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t">
                   <button
                     type="button"
-                    onClick={addMemberField}
-                    className="flex items-center gap-2 text-teal-600 hover:text-teal-700 transition-colors"
+                    onClick={() => {
+                      setShowGroupForm(false)
+                      resetForm()
+                    }}
+                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
-                    <UserPlus className="h-5 w-5" />
-                    Add Member
+                    Cancel
                   </button>
-                </div>
-                <div className="pt-4">
                   <button
                     type="submit"
-                    className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl text-white bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-all duration-300"
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
                   >
                     {editingGroup ? 'Update Group' : 'Create Group'}
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Group Management Modal */}
+        {showManagement && selectedGroup && (
+          <GroupManagement
+            group={selectedGroup}
+            onClose={() => setShowManagement(false)}
+            onGroupUpdated={onGroupUpdated}
+          />
+        )}
+
+        {/* Settlement Modal */}
+        {showSettlements && selectedGroup && (
+          <SettlementModal
+            isOpen={showSettlements}
+            onClose={() => setShowSettlements(false)}
+            groupId={selectedGroup._id}
+            groupMembers={selectedGroup.members || []}
+            onSettlementCreated={onSettlementCreated}
+          />
+        )}
+
+        {/* Balance Summary Modal */}
+        {showBalances && selectedGroup && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+                <h2 className="text-xl font-semibold">Balance Summary</h2>
+                <button
+                  onClick={() => setShowBalances(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="p-6">
+                <BalanceSummary groupId={selectedGroup._id} />
+              </div>
             </div>
           </div>
         )}

@@ -11,9 +11,11 @@ import {
   LineChart
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
+import { expenseService } from '../services/expenseService'
 
 const Analytics = () => {
   const [timeRange, setTimeRange] = useState('month')
+  const [loading, setLoading] = useState(false)
   const [expenseData, setExpenseData] = useState({
     totalExpenses: 0,
     averagePerPerson: 0,
@@ -28,23 +30,12 @@ const Analytics = () => {
     fetchAndProcessData()
   }, [timeRange])
 
-  const fetchAndProcessData = () => {
+  const fetchAndProcessData = async () => {
+    setLoading(true)
     try {
-      const storedExpenses = localStorage.getItem('expenses')
-      if (!storedExpenses) {
-        setExpenseData({
-          totalExpenses: 0,
-          averagePerPerson: 0,
-          highestCategory: 'No expenses',
-          totalTransactions: 0,
-          categoryBreakdown: [],
-          personBreakdown: [],
-          recentTransactions: []
-        })
-        return
-      }
-
-      const expenses = JSON.parse(storedExpenses)
+      // Fetch real data from API instead of localStorage
+      const expensesData = await expenseService.getExpenses()
+      const expenses = expensesData?.items || expensesData || []
       
       // Calculate total expenses
       const totalExpenses = expenses.reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
@@ -64,19 +55,28 @@ const Analytics = () => {
         change: 0 // We don't have historical data for change calculation
       }))
 
-      // Calculate person breakdown
+      // Calculate person breakdown from splits (new data structure)
       const personMap = {}
       expenses.forEach(exp => {
-        exp.splitBetween.forEach(person => {
-          if (!personMap[person]) {
-            personMap[person] = { paid: 0, owed: 0 }
+        const splits = exp.splits || []
+        
+        splits.forEach(split => {
+          const personName = split.userId?.name || split.tempName || split.email || 'Unknown'
+          
+          if (!personMap[personName]) {
+            personMap[personName] = { paid: 0, owed: 0 }
           }
-          const share = parseFloat(exp.amount) / exp.splitBetween.length
-          if (exp.paidBy === person) {
-            personMap[person].paid += parseFloat(exp.amount)
-          }
-          personMap[person].owed += share
+          
+          const shareAmount = parseFloat(split.amount) || 0
+          personMap[personName].owed += shareAmount
         })
+        
+        // Track who paid
+        const payerName = exp.paidBy?.name || 'Unknown'
+        if (!personMap[payerName]) {
+          personMap[payerName] = { paid: 0, owed: 0 }
+        }
+        personMap[payerName].paid += parseFloat(exp.amount) || 0
       })
 
       const personBreakdown = Object.entries(personMap).map(([name, data]) => ({
@@ -114,6 +114,8 @@ const Analytics = () => {
     } catch (error) {
       toast.error('Failed to load analytics data')
       console.error('Error processing analytics data:', error)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -124,18 +126,27 @@ const Analytics = () => {
         <p className="text-gray-600 mt-2">Track and analyze your expenses</p>
       </div>
 
-      {/* Time Range Selector */}
-      <div className="mb-8">
-        <select
-          value={timeRange}
-          onChange={(e) => setTimeRange(e.target.value)}
-          className="mt-1 block w-full md:w-48 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-        >
-          <option value="week">Last 7 days</option>
-          <option value="month">Last 30 days</option>
-          <option value="year">Last 12 months</option>
-        </select>
-      </div>
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        </div>
+      )}
+
+      {!loading && (
+        <>
+          {/* Time Range Selector */}
+          <div className="mb-8">
+            <select
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value)}
+              className="mt-1 block w-full md:w-48 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            >
+              <option value="week">Last 7 days</option>
+              <option value="month">Last 30 days</option>
+              <option value="year">Last 12 months</option>
+            </select>
+          </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -273,6 +284,8 @@ const Analytics = () => {
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   )
 }

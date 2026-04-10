@@ -10,8 +10,7 @@ import {
   ArrowRight
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
-import { expenseService } from '../services/expenseService'
-import { authService } from '../services/authService'
+import { settlementService } from '../services/settlementService'
 
 const Settlements = () => {
   const [activeTab, setActiveTab] = useState('pending')
@@ -28,70 +27,19 @@ const Settlements = () => {
 
   const loadSettlements = async () => {
     try {
-      const user = authService.getCurrentUser()
-      if (!user) return
-      const expenses = await expenseService.getExpenses()
-      const balances = {}
-      const addBalance = (person, delta) => {
-        balances[person] = (balances[person] || 0) + delta
-      }
-      expenses.forEach((exp) => {
-        const amount = Number(exp.amount) || 0
-        const participants = exp.splitBetween || []
-        const share = participants.length ? amount / participants.length : 0
-        // Payer gets credited amount
-        addBalance(exp.paidBy, amount)
-        // Each participant owes their share
-        participants.forEach((p) => addBalance(p, -share))
+      const settlementsData = await settlementService.getSettlements()
+      const settlements = settlementsData?.items || settlementsData || []
+      
+      const pending = settlements.filter(s => s.status === 'pending')
+      const completed = settlements.filter(s => s.status === 'confirmed')
+      
+      setSettlements({
+        pending,
+        completed
       })
-
-      const current = user.email
-      const pendingSettlements = []
-      const completedSettlements = []
-
-      // Build settlements from perspective of current user
-      const currBal = balances[current] || 0
-      Object.entries(balances).forEach(([person, bal]) => {
-        if (person === current) return
-        const net = bal
-        // If current is owed (currBal > 0) and person owes (net < 0), they pay current
-        if (currBal > 0 && net < 0) {
-          const amount = Math.min(currBal, Math.abs(net))
-          if (amount > 0.01) {
-            pendingSettlements.push({
-              id: `${person}->${current}`,
-              from: person,
-              to: current,
-              amount: amount.toFixed(2),
-              description: 'Expense settlement',
-              date: new Date().toISOString().split('T')[0],
-              status: 'pending',
-              paymentMethod: 'UPI'
-            })
-          }
-        }
-        // If current owes (currBal < 0) and person is owed (net > 0), current pays person
-        if (currBal < 0 && net > 0) {
-          const amount = Math.min(Math.abs(currBal), net)
-          if (amount > 0.01) {
-            pendingSettlements.push({
-              id: `${current}->${person}`,
-              from: current,
-              to: person,
-              amount: amount.toFixed(2),
-              description: 'Expense settlement',
-              date: new Date().toISOString().split('T')[0],
-              status: 'pending',
-              paymentMethod: 'UPI'
-            })
-          }
-        }
-      })
-
-      setSettlements({ pending: pendingSettlements, completed: completedSettlements })
     } catch (error) {
-      toast.error('Failed to calculate settlements')
-      console.error('Error calculating settlements:', error)
+      toast.error('Failed to load settlements')
+      console.error('Error loading settlements:', error)
     }
   }
 
