@@ -4,9 +4,11 @@ import { toast } from 'react-hot-toast'
 import { FaChartPie } from 'react-icons/fa'
 import { Eye, EyeOff } from 'lucide-react'
 import { authService } from '../services/authService'
+import { useAuth } from '../hooks/useAuth'
 
 const Login = () => {
   const navigate = useNavigate()
+  const { forceAuthCheck, updateUser } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [formData, setFormData] = useState({
     email: '',
@@ -23,18 +25,35 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    e.stopPropagation()
+    
     try {
       setLoading(true)
-      const data = await authService.login({
+      const response = await authService.login({
         email: formData.email,
         password: formData.password
       })
 
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('user', JSON.stringify(data.user))
+      const payload = response?.data || response
+      const token = payload?.token || payload?.accessToken
+      const user = payload?.user
 
+      // Store authentication data
+      if (!token || !user) {
+        throw new Error('Invalid login response from server')
+      }
+
+      localStorage.setItem('token', token)
+      localStorage.setItem('user', JSON.stringify(user))
+      
+      // Update React authentication state immediately
+      updateUser(user)
+      forceAuthCheck()
+      
       toast.success('Login successful!')
-      navigate('/dashboard')
+      
+      // Navigate using React Router
+      navigate('/dashboard', { replace: true })
     } catch (error) {
       const message = typeof error === 'string' ? error : (error.message || 'Login failed')
       toast.error(message)
@@ -120,12 +139,6 @@ const Login = () => {
                 <label htmlFor="remember-me" className="ml-2 block text-sm text-neutral-700">
                   Remember me
                 </label>
-              </div>
-
-              <div className="text-sm">
-                <Link to="/forgot-password" className="font-medium text-teal-600 hover:text-teal-500 transition-colors">
-                  Forgot your password?
-                </Link>
               </div>
             </div>
           </div>
