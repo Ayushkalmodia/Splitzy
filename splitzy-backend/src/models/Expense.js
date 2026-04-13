@@ -41,13 +41,24 @@ const expenseSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     currency: { type: String, default: 'USD' },
     category: { type: String, default: 'other' },
+    /** Last ML suggestion slug (aligned with `category` when auto-applied). */
+    predictedCategory: { type: String, trim: true },
+    /** Model confidence for `predictedCategory` in [0, 1]. */
+    categoryConfidence: { type: Number, min: 0, max: 1 },
+    /** Optional merchant / payee hint for ML and display. */
+    merchant: { type: String, trim: true, default: '' },
     date: { type: Date, default: Date.now },
-    groupId: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
+    groupId: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
     paidBy: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'User', 
       required: true 
     },
+    participants: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    }],
     splitType: { 
       type: String, 
       enum: ['equal', 'unequal', 'percentage', 'shares', 'manual'], 
@@ -112,6 +123,12 @@ expenseSchema.pre('save', function(next) {
       return next(new Error('Total split amounts must equal the expense amount'))
     }
   }
+
+  // Keep participants in sync with split users for shared-group expenses.
+  const splitParticipantIds = Array.from(
+    new Set((this.splits || []).map((split) => split.userId?.toString()).filter(Boolean))
+  )
+  this.participants = splitParticipantIds
   
   next()
 })

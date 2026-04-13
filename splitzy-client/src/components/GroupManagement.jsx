@@ -1,15 +1,37 @@
-import React, { useState } from 'react'
-import { Users, Mail, Settings, Crown, UserMinus, Shield, Copy, Plus, X } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { Users, Mail, Settings, UserMinus, Copy, Plus, X, Search } from 'lucide-react'
 import { groupService } from '../services/groupService'
+import { userService } from '../services/userService'
 import toast from 'react-hot-toast'
 
 const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
   const [inviteData, setInviteData] = useState({ token: '', expiry: null, inviteLink: '' })
+  const [inviteCode, setInviteCode] = useState('')
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [showAddMemberModal, setShowAddMemberModal] = useState(false)
-  const [newMember, setNewMember] = useState({ name: '', email: '', role: 'member' })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
   const [isGeneratingInvite, setIsGeneratingInvite] = useState(false)
   const [isAddingMember, setIsAddingMember] = useState(false)
+
+  useEffect(() => {
+    const runSearch = async () => {
+      const query = searchQuery.trim()
+      if (!showAddMemberModal || !query) {
+        setSearchResults([])
+        return
+      }
+
+      try {
+        const results = await userService.searchUsers(query)
+        const existing = new Set((group.members || []).map((member) => member._id))
+        setSearchResults(results.filter((result) => !existing.has(result._id)))
+      } catch {
+        setSearchResults([])
+      }
+    }
+    runSearch()
+  }, [searchQuery, showAddMemberModal, group.members])
 
   const generateInviteLink = async () => {
     setIsGeneratingInvite(true)
@@ -25,33 +47,39 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
     }
   }
 
+  const generateCode = async () => {
+    try {
+      const data = await groupService.generateInviteCode(group._id)
+      setInviteCode(data.inviteCode || '')
+      toast.success('Invite code generated')
+    } catch (error) {
+      toast.error(error?.message || 'Failed to generate invite code')
+    }
+  }
+
   const copyInviteLink = () => {
     navigator.clipboard.writeText(inviteData.inviteLink)
     toast.success('Invite link copied to clipboard')
   }
 
-  const addMember = async () => {
-    if (!newMember.name.trim()) {
-      toast.error('Name is required')
+  const addMember = async (member) => {
+    if (!member?._id) {
+      toast.error('Please select a valid user')
       return
     }
 
     setIsAddingMember(true)
     try {
-      const memberData = [{
-        tempName: newMember.name,
-        email: newMember.email?.trim() || undefined,
-        role: newMember.role
-      }]
-      
-      await groupService.updateGroup(group._id, { members: memberData })
+      const existing = (group.members || []).map((m) => m._id)
+      await groupService.updateGroup(group._id, { members: [...existing, member._id] })
       toast.success('Member added successfully')
       setShowAddMemberModal(false)
-      setNewMember({ name: '', email: '', role: 'member' })
+      setSearchQuery('')
+      setSearchResults([])
       onGroupUpdated && onGroupUpdated()
     } catch (error) {
       console.error('Add member error:', error)
-      toast.error(error.message || error.errors?.members?.[0] || 'Failed to add member')
+      toast.error(error.message || 'Failed to add member')
     } finally {
       setIsAddingMember(false)
     }
@@ -71,22 +99,8 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
     }
   }
 
-  const updateMemberRole = async (memberId, newRole) => {
-    try {
-      await groupService.updateMemberRole(group._id, memberId, newRole)
-      toast.success('Member role updated successfully')
-      onGroupUpdated && onGroupUpdated()
-    } catch (error) {
-      toast.error(error.message || 'Failed to update member role')
-    }
-  }
-
-  const getRoleIcon = (role) => {
-    return role === 'admin' ? <Crown className="w-4 h-4 text-yellow-500" /> : <Shield className="w-4 h-4 text-gray-400" />
-  }
-
   const isOwner = (member) => {
-    return group.owner?._id === member.userId?._id
+    return group.createdBy?._id === member._id
   }
 
   return (
@@ -131,7 +145,20 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
               <Plus className="w-4 h-4" />
               Add Member
             </button>
+            <button
+              onClick={generateCode}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+            >
+              Generate Invite Code
+            </button>
           </div>
+
+          {inviteCode && (
+            <div className="p-3 rounded-lg bg-purple-50 border border-purple-200 text-sm">
+              <span className="text-gray-700 mr-2">Invite code:</span>
+              <span className="font-mono font-semibold text-purple-700">{inviteCode}</span>
+            </div>
+          )}
 
           {/* Members List */}
           <div>
@@ -143,27 +170,21 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
             <div className="space-y-2">
               {group.members?.map((member) => (
                 <div
-                  key={member._id || member.email}
+                  key={member._id}
                   className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                      {member.userId?.name?.[0] || member.tempName?.[0] || member.email?.[0] || '?'}
+                      {member.name?.[0] || member.email?.[0] || '?'}
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">
-                          {member.userId?.name || member.tempName || member.email || 'Unknown'}
+                          {member.name || member.email || 'Unknown'}
                         </span>
-                        {getRoleIcon(member.role)}
                         {isOwner(member) && (
                           <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
-                            Owner
-                          </span>
-                        )}
-                        {member.isTemporary && (
-                          <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full">
-                            Temporary
+                            Creator
                           </span>
                         )}
                       </div>
@@ -175,23 +196,13 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
 
                   <div className="flex items-center gap-2">
                     {!isOwner(member) && (
-                      <>
-                        <select
-                          value={member.role}
-                          onChange={(e) => updateMemberRole(member.userId?._id || member.userId, e.target.value)}
-                          className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="member">Member</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                        <button
-                          onClick={() => removeMember(member.userId?._id || member.userId)}
-                          className="text-red-500 hover:text-red-700 transition-colors"
-                          title="Remove member"
-                        >
-                          <UserMinus className="w-4 h-4" />
-                        </button>
-                      </>
+                      <button
+                        onClick={() => removeMember(member._id)}
+                        className="text-red-500 hover:text-red-700 transition-colors"
+                        title="Remove member"
+                      >
+                        <UserMinus className="w-4 h-4" />
+                      </button>
                     )}
                   </div>
                 </div>
@@ -253,45 +264,34 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
           <div className="bg-white rounded-lg max-w-md w-full p-6">
             <h3 className="text-lg font-semibold mb-4">Add New Member</h3>
             
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name *
-                </label>
+            <div className="space-y-3">
+              <div className="flex items-center border border-gray-300 rounded-lg px-3 py-2 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500">
+                <Search className="w-4 h-4 text-gray-400 mr-2" />
                 <input
                   type="text"
-                  value={newMember.name}
-                  onChange={(e) => setNewMember(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter name"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full outline-none text-sm"
+                  placeholder="Search by name or email"
                 />
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={newMember.email}
-                  onChange={(e) => setNewMember(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Enter email (optional)"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Role
-                </label>
-                <select
-                  value={newMember.role}
-                  onChange={(e) => setNewMember(prev => ({ ...prev, role: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </select>
+
+              <div className="max-h-56 overflow-y-auto border border-gray-200 rounded-lg">
+                {searchQuery.trim() && searchResults.length === 0 && (
+                  <div className="px-3 py-2 text-sm text-gray-500">No users found</div>
+                )}
+                {searchResults.map((result) => (
+                  <button
+                    key={result._id}
+                    type="button"
+                    onClick={() => addMember(result)}
+                    disabled={isAddingMember}
+                    className="w-full text-left px-3 py-2 hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    <div className="text-sm font-medium text-gray-900">{result.name}</div>
+                    <div className="text-xs text-gray-500">{result.email}</div>
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -303,11 +303,10 @@ const GroupManagement = ({ group, onClose, onGroupUpdated }) => {
                 Cancel
               </button>
               <button
-                onClick={addMember}
-                disabled={isAddingMember}
+                onClick={() => setShowAddMemberModal(false)}
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
-                {isAddingMember ? 'Adding...' : 'Add Member'}
+                Done
               </button>
             </div>
           </div>

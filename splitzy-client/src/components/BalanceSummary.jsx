@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { ArrowDownLeft, ArrowUpRight, Users, DollarSign, TrendingUp, TrendingDown, CheckCircle, Clock } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Users, DollarSign, TrendingUp, GitBranch } from 'lucide-react'
 import { groupService } from '../services/groupService'
 import { expenseService } from '../services/expenseService'
 import { formatCurrency } from '../utils/currency.js'
@@ -7,28 +7,55 @@ import { Card, CardHeader, CardTitle, CardContent } from './ui/Card.jsx'
 import Button from './ui/Button.jsx'
 import toast from 'react-hot-toast'
 
+const uidStr = (v) => {
+  if (!v) return ''
+  if (typeof v === 'object' && v._id) return v._id.toString()
+  return String(v)
+}
+
+const partyIsUser = (party, currentUserId, currentUserEmail) => {
+  if (!party) return false
+  if (currentUserId && uidStr(party.userId) === String(currentUserId)) return true
+  if (currentUserEmail && party.email && party.email.toLowerCase() === String(currentUserEmail).toLowerCase()) {
+    return true
+  }
+  return false
+}
+
 const BalanceSummary = ({ groupId, userId, onSettleClick }) => {
   const [balanceData, setBalanceData] = useState(null)
   const [userBalance, setUserBalance] = useState(null)
+  const [optimized, setOptimized] = useState(null)
+  const [optFailed, setOptFailed] = useState(false)
   const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    fetchBalanceData()
-  }, [fetchBalanceData])
 
   const fetchBalanceData = useCallback(async () => {
     setLoading(true)
+    setOptFailed(false)
     try {
       const [groupBalances, userTotalBalance] = await Promise.all([
         groupId ? groupService.getGroupBalances(groupId) : null,
         expenseService.getUserBalance()
       ])
-      
+
       if (groupBalances) {
         setBalanceData(groupBalances)
       }
-      
+
       setUserBalance(userTotalBalance)
+
+      if (groupId) {
+        try {
+          const opt = await groupService.getOptimizedSettlements(groupId)
+          setOptimized(opt)
+        } catch (e) {
+          console.error('Optimized settlements failed:', e)
+          setOptimized(null)
+          setOptFailed(true)
+        }
+      } else {
+        setOptimized(null)
+      }
     } catch (error) {
       console.error('Error fetching balance data:', error)
       toast.error('Failed to load balance data')
@@ -36,6 +63,10 @@ const BalanceSummary = ({ groupId, userId, onSettleClick }) => {
       setLoading(false)
     }
   }, [groupId])
+
+  useEffect(() => {
+    fetchBalanceData()
+  }, [fetchBalanceData])
 
   const getBalanceColor = (balance) => {
     if (balance > 0) return 'text-green-600'
@@ -181,23 +212,29 @@ const BalanceSummary = ({ groupId, userId, onSettleClick }) => {
           </CardHeader>
           <CardContent className="space-y-3">
             {balanceData.debts.map((debt, index) => {
-              const isIncoming = debt.from.userId === userId || debt.from.email === userBalance?.email
-              
+              const youOwe = partyIsUser(debt.from, userId, userBalance?.email)
+              const youOwed = partyIsUser(debt.to, userId, userBalance?.email)
+              const isIncoming = youOwed && !youOwe
+
               return (
                 <div
                   key={index}
                   className={`p-4 rounded-xl border ${
-                    isIncoming 
-                      ? 'bg-green-50 border-green-200' 
-                      : 'bg-red-50 border-red-200'
+                    isIncoming
+                      ? 'bg-green-50 border-green-200'
+                      : youOwe
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-neutral-50 border-neutral-200'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${
-                        isIncoming 
-                          ? 'bg-green-100 text-green-600' 
-                          : 'bg-red-100 text-red-600'
+                        isIncoming
+                          ? 'bg-green-100 text-green-600'
+                          : youOwe
+                            ? 'bg-red-100 text-red-600'
+                            : 'bg-neutral-100 text-neutral-600'
                       }`}>
                         {isIncoming ? (
                           <ArrowUpRight className="w-4 h-4" />
@@ -207,30 +244,119 @@ const BalanceSummary = ({ groupId, userId, onSettleClick }) => {
                       </div>
                       <div>
                         <p className="font-medium text-neutral-900">
-                          {isIncoming 
-                            ? `${debt.from.name} owes you`
-                            : `You owe ${debt.to.name}`
-                          }
+                          {youOwe && `You owe ${debt.to.name}`}
+                          {youOwed && !youOwe && `${debt.from.name} owes you`}
+                          {!youOwe && !youOwed && `${debt.from.name} → ${debt.to.name}`}
                         </p>
                         <p className="text-sm text-neutral-600">
-                          {isIncoming ? 'Incoming payment' : 'Outgoing payment'}
+                          {isIncoming ? 'Incoming payment' : youOwe ? 'Outgoing payment' : 'Group transfer'}
                         </p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className={`text-lg font-bold ${
-                        isIncoming ? 'text-green-600' : 'text-red-600'
+                        isIncoming ? 'text-green-600' : youOwe ? 'text-red-600' : 'text-neutral-800'
                       }`}>
                         {formatCurrency(debt.amount)}
                       </p>
-                      <Button
-                        size="sm"
-                        variant={isIncoming ? "secondary" : "primary"}
-                        onClick={() => onSettleClick?.(debt)}
-                        className="mt-1"
-                      >
-                        {isIncoming ? 'Mark Received' : 'Settle Now'}
-                      </Button>
+                      {(youOwe || youOwed) && (
+                        <Button
+                          size="sm"
+                          variant={isIncoming ? 'secondary' : 'primary'}
+                          onClick={() => onSettleClick?.(debt)}
+                          className="mt-1"
+                        >
+                          {isIncoming ? 'Mark Received' : 'Settle Now'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Optimized settlements (Python / NetworkX) */}
+      {groupId && optFailed && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          Could not load optimized settlement suggestions. Check that the analytics service is running.
+        </p>
+      )}
+      {groupId && optimized && (optimized.transactions?.length > 0 || optimized.transaction_count === 0) && (
+        <Card variant="elevated">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="w-5 h-5 text-teal-600" />
+              Optimized settlement suggestions
+            </CardTitle>
+            <p className="text-sm text-neutral-600 mt-1">
+              Minimum transfers to clear all balances in this group (same net result as simplified debts, fewer payments when possible).
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {optimized.transaction_count === 0 && (
+              <p className="text-sm text-neutral-600">No payments needed — balances net to zero.</p>
+            )}
+            <div className="flex flex-wrap gap-3 text-sm text-neutral-700">
+              <span className="rounded-lg bg-neutral-100 px-3 py-1 font-medium">
+                {optimized.transaction_count} payment{optimized.transaction_count === 1 ? '' : 's'}
+              </span>
+              {typeof optimized.legacyPairwiseCount === 'number' && (
+                <span className="rounded-lg bg-neutral-100 px-3 py-1">
+                  vs {optimized.legacyPairwiseCount} simplified pairwise
+                </span>
+              )}
+              {typeof optimized.transactions_saved_vs_legacy === 'number' && optimized.transactions_saved_vs_legacy > 0 && (
+                <span className="rounded-lg bg-teal-100 text-teal-900 px-3 py-1 font-medium">
+                  Saves {optimized.transactions_saved_vs_legacy} transfer{optimized.transactions_saved_vs_legacy === 1 ? '' : 's'}
+                </span>
+              )}
+              {typeof optimized.transactions_saved_vs_bipartite === 'number' && optimized.transactions_saved_vs_bipartite > 0 && (
+                <span className="rounded-lg bg-emerald-50 text-emerald-900 px-3 py-1 text-xs">
+                  vs naive all-debtor→all-creditor: −{optimized.transactions_saved_vs_bipartite}
+                </span>
+              )}
+            </div>
+            {(optimized.transactions || []).map((row, index) => {
+              const youOwe = partyIsUser(row.from, userId, userBalance?.email)
+              const youOwed = partyIsUser(row.to, userId, userBalance?.email)
+              const isIncoming = youOwed && !youOwe
+              const debtShim = {
+                from: row.from,
+                to: row.to,
+                amount: row.amount
+              }
+              return (
+                <div
+                  key={index}
+                  className={`p-4 rounded-xl border ${
+                    isIncoming
+                      ? 'bg-green-50 border-green-200'
+                      : youOwe
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-white border-neutral-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-neutral-900">
+                        {row.from.name} pays {row.to.name}
+                      </p>
+                      <p className="text-xs text-neutral-500">
+                        {youOwe && 'You are paying'}
+                        {youOwed && !youOwe && 'You receive'}
+                        {!youOwe && !youOwed && 'Suggested group payment'}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-lg font-bold text-neutral-900">{formatCurrency(row.amount)}</p>
+                      {(youOwe || youOwed) && (
+                        <Button size="sm" variant={isIncoming ? 'secondary' : 'primary'} className="mt-1" onClick={() => onSettleClick?.(debtShim)}>
+                          {isIncoming ? 'Mark Received' : 'Settle Now'}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>

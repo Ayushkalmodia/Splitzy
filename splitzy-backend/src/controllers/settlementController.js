@@ -3,6 +3,7 @@ import Group from '../models/Group.js'
 import User from '../models/User.js'
 import BalanceService from '../services/balanceService.js'
 import { validate, createSettlementSchema, updateSettlementSchema, paginationSchema } from '../utils/validation.js'
+import { emitToGroup } from '../realtime/socket.js'
 
 export const createSettlement = async (req, res) => {
   try {
@@ -12,30 +13,20 @@ export const createSettlement = async (req, res) => {
     const group = await Group.findOne({
       _id: settlementData.groupId,
       $or: [
-        { owner: req.user.id },
-        { 'members.userId': req.user.id }
+        { createdBy: req.user.id },
+        { members: req.user.id }
       ],
       isActive: true
-    }).populate('members.userId', 'name email')
+    }).populate('members', 'name email')
 
     if (!group) {
       return res.status(404).json({ message: 'Group not found or access denied' })
     }
 
-    // Check if both users are group members (handle both registered and temporary members)
-    const fromMember = group.members.find(m => {
-      if (settlementData.fromUserIsTemporary || !settlementData.fromUser) {
-        return m.email === settlementData.fromUserEmail && m.isTemporary
-      }
-      return m.userId && m.userId.toString() === settlementData.fromUser
-    })
-    
-    const toMember = group.members.find(m => {
-      if (settlementData.toUserIsTemporary || !settlementData.toUser) {
-        return m.email === settlementData.toUserEmail && m.isTemporary
-      }
-      return m.userId && m.userId.toString() === settlementData.toUser
-    })
+    // Check if both users are group members
+    const groupMemberIds = new Set(group.members.map((member) => member._id.toString()))
+    const fromMember = settlementData.fromUser && groupMemberIds.has(String(settlementData.fromUser))
+    const toMember = settlementData.toUser && groupMemberIds.has(String(settlementData.toUser))
 
     if (!fromMember || !toMember) {
       return res.status(400).json({ message: 'Both users must be group members' })
@@ -61,6 +52,8 @@ export const createSettlement = async (req, res) => {
       .populate('groupId', 'name')
       .populate('confirmedBy', 'name email')
       .populate('createdBy', 'name email')
+
+    emitToGroup(settlementData.groupId, 'settlement:created', { settlement: populatedSettlement })
 
     res.status(201).json(populatedSettlement)
   } catch (err) {
@@ -130,8 +123,8 @@ export const getGroupSettlements = async (req, res) => {
     const group = await Group.findOne({
       _id: groupId,
       $or: [
-        { owner: req.user.id },
-        { 'members.userId': req.user.id }
+        { createdBy: req.user.id },
+        { members: req.user.id }
       ],
       isActive: true
     })
@@ -320,8 +313,8 @@ export const getSettlementSuggestions = async (req, res) => {
     const group = await Group.findOne({
       _id: groupId,
       $or: [
-        { owner: req.user.id },
-        { 'members.userId': req.user.id }
+        { createdBy: req.user.id },
+        { members: req.user.id }
       ],
       isActive: true
     })
@@ -335,32 +328,17 @@ export const getSettlementSuggestions = async (req, res) => {
     
     // Populate user details for each suggestion
     const suggestions = await Promise.all(balanceData.debts.map(async (debt) => {
-      let fromUser, toUser
-      
-      // Handle temporary members vs registered users
-      if (debt.from.isTemporary || !debt.from.userId) {
-        fromUser = { _id: null, name: debt.from.name, email: debt.from.email }
-      } else {
-        fromUser = await User.findById(debt.from.userId).select('name email')
-        fromUser = fromUser || { _id: debt.from.userId, name: debt.from.name, email: debt.from.email }
-      }
-      
-      if (debt.to.isTemporary || !debt.to.userId) {
-        toUser = { _id: null, name: debt.to.name, email: debt.to.email }
-      } else {
-        toUser = await User.findById(debt.to.userId).select('name email')
-        toUser = toUser || { _id: debt.to.userId, name: debt.to.name, email: debt.to.email }
-      }
-      
+      const [fromUser, toUser] = await Promise.all([
+        User.findById(debt.from.userId).select('name email'),
+        User.findById(debt.to.userId).select('name email')
+      ])
+
       return {
-        fromUser,
-        toUser,
+        fromUser: fromUser || { _id: debt.from.userId, name: debt.from.name, email: debt.from.email },
+        toUser: toUser || { _id: debt.to.userId, name: debt.to.name, email: debt.to.email },
         amount: debt.amount,
         groupId: groupId,
-        method: 'manual',
-        // Include temporary member flags for frontend handling
-        fromUserIsTemporary: debt.from.isTemporary,
-        toUserIsTemporary: debt.to.isTemporary
+        method: 'manual'
       }
     }))
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Users, Percent, Hash, Calculator, Plus, Trash2 } from 'lucide-react'
+import { Users, Percent, Hash, Calculator } from 'lucide-react'
 import { roundToTwo, parseCurrency, currencyEquals } from '../../utils/currency.js'
 import Input from '../ui/Input.jsx'
 
@@ -35,11 +35,35 @@ const SplitConfiguration = ({
     }
   }, [splitType, members, amount, onSplitsChange])
 
+  useEffect(() => {
+    if (splitType !== 'equal' && members.length > 0 && localSplits.length === 0) {
+      const baseAmount = members.length ? roundToTwo((amount || 0) / members.length) : 0
+      const initialSplits = members.map((member) => ({
+        id: member.id || member.userId,
+        userId: member.userId,
+        email: member.email,
+        name: member.name || member.email,
+        amount: baseAmount,
+        percentage: members.length ? roundToTwo(100 / members.length) : 0,
+        shares: 1,
+        isTemporary: false
+      }))
+      setLocalSplits(initialSplits)
+      onSplitsChange(initialSplits)
+    }
+  }, [splitType, members, amount, localSplits.length, onSplitsChange])
+
   const handleSplitChange = (index, field, value) => {
     const updatedSplits = [...localSplits]
     const split = updatedSplits[index]
     
     switch (field) {
+      case 'name':
+        split.name = value
+        break
+      case 'email':
+        split.email = value
+        break
       case 'amount':
         split.amount = parseCurrency(value)
         if (splitType === 'percentage' && amount) {
@@ -80,26 +104,6 @@ const SplitConfiguration = ({
     onSplitsChange(updatedSplits)
   }
 
-  const addSplit = () => {
-    const newSplit = {
-      id: Math.random().toString(36).substr(2, 9),
-      email: '',
-      name: '',
-      amount: 0,
-      percentage: 0,
-      shares: 1,
-      isTemporary: true
-    }
-    setLocalSplits([...localSplits, newSplit])
-    onSplitsChange([...localSplits, newSplit])
-  }
-
-  const removeSplit = (index) => {
-    const updatedSplits = localSplits.filter((_, i) => i !== index)
-    setLocalSplits(updatedSplits)
-    onSplitsChange(updatedSplits)
-  }
-
   const getTotalAmount = () => {
     return localSplits.reduce((sum, split) => sum + (split.amount || 0), 0)
   }
@@ -111,20 +115,9 @@ const SplitConfiguration = ({
   const renderSplitInput = (split, index) => {
     const commonFields = (
       <>
-        <Input
-          placeholder="Name"
-          value={split.name || ''}
-          onChange={(e) => handleSplitChange(index, 'name', e.target.value)}
-          error={errors[`splits.${index}.name`]}
-          className="flex-1"
-        />
-        <Input
-          placeholder="Email"
-          value={split.email || ''}
-          onChange={(e) => handleSplitChange(index, 'email', e.target.value)}
-          error={errors[`splits.${index}.email`]}
-          className="flex-1"
-        />
+        <div className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm">
+          {split.name || split.email || 'Member'}
+        </div>
       </>
     )
 
@@ -136,13 +129,6 @@ const SplitConfiguration = ({
             <div className="w-24 text-right font-medium">
               ${split.amount || 0}
             </div>
-            <button
-              type="button"
-              onClick={() => removeSplit(index)}
-              className="p-1 text-red-500 hover:bg-red-50 rounded"
-            >
-              <Trash2 size={16} />
-            </button>
           </div>
         )
       
@@ -163,13 +149,6 @@ const SplitConfiguration = ({
             <div className="w-16 text-right text-sm text-gray-500">
               {split.percentage || 0}%
             </div>
-            <button
-              type="button"
-              onClick={() => removeSplit(index)}
-              className="p-1 text-red-500 hover:bg-red-50 rounded"
-            >
-              <Trash2 size={16} />
-            </button>
           </div>
         )
       
@@ -191,13 +170,6 @@ const SplitConfiguration = ({
             <div className="w-24 text-right font-medium">
               ${split.amount || 0}
             </div>
-            <button
-              type="button"
-              onClick={() => removeSplit(index)}
-              className="p-1 text-red-500 hover:bg-red-50 rounded"
-            >
-              <Trash2 size={16} />
-            </button>
           </div>
         )
       
@@ -221,13 +193,6 @@ const SplitConfiguration = ({
             <div className="w-24 text-right font-medium">
               ${split.amount || 0}
             </div>
-            <button
-              type="button"
-              onClick={() => removeSplit(index)}
-              className="p-1 text-red-500 hover:bg-red-50 rounded"
-            >
-              <Trash2 size={16} />
-            </button>
           </div>
         )
       
@@ -253,17 +218,6 @@ const SplitConfiguration = ({
           </div>
         ))}
       </div>
-
-      {(splitType === 'unequal' || splitType === 'percentage' || splitType === 'shares') && (
-        <button
-          type="button"
-          onClick={addSplit}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
-        >
-          <Plus size={16} />
-          Add Person
-        </button>
-      )}
 
       {/* Validation Summary */}
       <div className="border-t pt-4">

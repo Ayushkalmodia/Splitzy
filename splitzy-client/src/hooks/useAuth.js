@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import apiClient from '../lib/api.js'
 
 const readAuthFromStorage = () => {
   const token = localStorage.getItem('token')
@@ -93,6 +94,8 @@ export const useAuth = () => {
   }, [forceAuthCheck])
 
   const logout = () => {
+    void apiClient.post('/auth/logout', {}, { withCredentials: true }).catch(() => {})
+
     localStorage.removeItem('token')
     localStorage.removeItem('user')
 

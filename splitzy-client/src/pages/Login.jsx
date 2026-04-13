@@ -5,6 +5,7 @@ import { FaChartPie } from 'react-icons/fa'
 import { Eye, EyeOff } from 'lucide-react'
 import { authService } from '../services/authService'
 import { useAuth } from '../hooks/useAuth.js'
+import SocialAuthButtons from '../components/SocialAuthButtons.jsx'
 
 const Login = () => {
   const navigate = useNavigate()
@@ -55,7 +56,9 @@ const Login = () => {
       // Navigate using React Router
       navigate('/dashboard', { replace: true })
     } catch (error) {
-      const message = typeof error === 'string' ? error : (error.message || 'Login failed')
+      const apiMsg = error.response?.data?.message
+      const message =
+        typeof error === 'string' ? error : apiMsg || error.message || 'Login failed'
       toast.error(message)
     } finally {
       setLoading(false)
@@ -166,6 +169,8 @@ const Login = () => {
             </p>
           </div>
         </form>
+
+        <SocialAuthButtons disabled={loading} />
       </div>
     </div>
   )

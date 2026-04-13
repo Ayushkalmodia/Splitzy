@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { FaChartPie } from 'react-icons/fa'
 import { 
   ChevronDown, 
   LogOut, 
-  Settings, 
   User,
   Menu,
   X
@@ -13,6 +12,7 @@ import { useAuth } from '../hooks/useAuth'
 
 const Navbar = () => {
   const { user, logout } = useAuth()
+  const { pathname } = useLocation()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
 
@@ -48,7 +48,7 @@ const Navbar = () => {
                 key={item.name}
                 to={item.href}
                 className={`${
-                  location.pathname === item.href
+                  pathname === item.href
                     ? 'border-teal-500 text-neutral-900'
                     : 'border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-700'
                 } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
@@ -91,13 +91,6 @@ const Navbar = () => {
                   >
                     <User className="h-4 w-4 mr-2 text-teal-600" />
                     Profile
-                  </Link>
-                  <Link
-                    to="/settings"
-                    className="flex items-center w-full px-4 py-2.5 text-sm text-neutral-700 hover:bg-teal-50 transition-colors"
-                  >
-                    <Settings className="h-4 w-4 mr-2 text-teal-600" />
-                    Settings
                   </Link>
                   <div className="border-t border-neutral-200 my-1"></div>
                   <button
@@ -149,13 +142,6 @@ const Navbar = () => {
               onClick={() => setShowMobileMenu(false)}
             >
               Profile
-            </Link>
-            <Link
-              to="/settings"
-              className="block px-3 py-2 rounded-md text-base font-medium text-neutral-600 hover:text-teal-600 hover:bg-teal-50 transition-colors"
-              onClick={() => setShowMobileMenu(false)}
-            >
-              Settings
             </Link>
             <button
               onClick={() => {

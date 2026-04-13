@@ -1,0 +1,18 @@
+# Optional local PostgreSQL warehouse for Power BI / ETL.
+# Usage: docker compose -f docker-compose.reporting.yml up -d
+# Then: REPORTING_DATABASE_URL=postgresql://splitzy:splitzy@localhost:5433/splitzy_reporting
+
+services:
+  reporting-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: splitzy_reporting
+      POSTGRES_USER: splitzy
+      POSTGRES_PASSWORD: splitzy
+    ports:
+      - "5433:5432"
+    volumes:
+      - splitzy_reporting_pgdata:/var/lib/postgresql/data
+
+volumes:
+  splitzy_reporting_pgdata:

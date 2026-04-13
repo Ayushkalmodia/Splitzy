@@ -95,19 +95,6 @@
   background: #cbd5e1;
 }
 
-/* Toast Styles */
-.Toastify__toast {
-  @apply rounded-xl border border-neutral-200 bg-white/80 backdrop-blur-lg shadow-lg;
-}
-
-.Toastify__toast-body {
-  @apply text-sm text-neutral-900;
-}
-
-.Toastify__progress-bar {
-  @apply bg-gradient-to-r from-teal-500 to-emerald-600;
-}
-
 /* Animations */
 @keyframes slide-up {
   from {

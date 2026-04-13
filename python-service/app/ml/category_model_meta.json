@@ -1,0 +1,12 @@
+{
+  "classes": [
+    "Entertainment",
+    "Food",
+    "Other",
+    "Rent",
+    "Shopping",
+    "Travel",
+    "Utilities"
+  ],
+  "artifact": "category_model.pkl"
+}

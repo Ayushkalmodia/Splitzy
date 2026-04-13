@@ -25,7 +25,9 @@ const ExpenseCardComponent = ({
   }
 
   const formatDate = (dateString) => {
+    if (!dateString) return '-'
     const date = new Date(dateString)
+    if (Number.isNaN(date.getTime())) return '-'
     const today = new Date()
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
@@ -78,7 +80,7 @@ const ExpenseCardComponent = ({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onEdit(expense)}
+              onClick={() => onEdit?.(expense)}
               className="p-2 hover:bg-teal-50 hover:text-teal-600 rounded-lg"
             >
               <Edit2 className="h-4 w-4" />
@@ -86,7 +88,7 @@ const ExpenseCardComponent = ({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onDelete(expense._id)}
+              onClick={() => onDelete?.(expense._id)}
               className="p-2 hover:bg-red-50 hover:text-red-600 rounded-lg"
             >
               <Trash2 className="h-4 w-4" />

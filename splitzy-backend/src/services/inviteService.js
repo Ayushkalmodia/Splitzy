@@ -43,7 +43,7 @@ class InviteService {
         inviteToken: token,
         inviteTokenExpiry: { $gt: new Date() },
         isActive: true
-      }).populate('members.userId', 'email')
+      }).populate('members', 'email')
 
       if (!group) {
         throw new Error('Invalid or expired invite token')
@@ -55,22 +55,14 @@ class InviteService {
       }
 
       // Check if user is already a member
-      const existingMember = group.members.find(member => 
-        member.userId && member.userId.toString() === userId
-      )
+      const existingMember = group.members.some((memberId) => memberId.toString() === userId)
 
       if (existingMember) {
         throw new Error('User is already a member of this group')
       }
 
       // Add user to group
-      group.members.push({
-        userId: userId,
-        email: user.email,
-        role: role,
-        joinedAt: new Date(),
-        isTemporary: false
-      })
+      group.members.push(userId)
 
       await group.save()
 
@@ -82,113 +74,6 @@ class InviteService {
       return group
     } catch (error) {
       throw new Error(`Failed to join group: ${error.message}`)
-    }
-  }
-
-  /**
-   * Add temporary users to group
-   * @param {string} groupId - Group ID
-   * @param {Array} tempUsers - Array of temporary user objects
-   * @returns {Promise<Object>} Updated group
-   */
-  static async addTemporaryUsers(groupId, tempUsers) {
-    try {
-      console.log('Adding temporary users to group:', groupId, tempUsers)
-      const group = await Group.findById(groupId)
-      if (!group) {
-        throw new Error('Group not found')
-      }
-      
-      const newMembers = []
-      
-      for (const tempUser of tempUsers) {
-        // Check if email already exists as a registered user
-        if (tempUser.email) {
-          console.log('Looking for user with email:', tempUser.email)
-          const existingUser = await User.findOne({ email: tempUser.email.toLowerCase() })
-          console.log('Found existing user:', existingUser)
-          if (existingUser) {
-            // Add as registered user if not already member
-            const existingMember = group.members.find(member => 
-              member.userId && member.userId.toString() === existingUser._id.toString()
-            )
-            
-            if (!existingMember) {
-              newMembers.push({
-                userId: existingUser._id,
-                email: existingUser.email,
-                role: tempUser.role || 'member',
-                joinedAt: new Date(),
-                isTemporary: false
-              })
-            }
-            continue
-          }
-        }
-
-        // Add as temporary user
-        const existingTempMember = group.members.find(member => 
-          member.email && member.email === tempUser.email
-        )
-        
-        if (!existingTempMember) {
-          newMembers.push({
-            email: tempUser.email,
-            tempName: tempUser.name || tempUser.tempName,
-            role: tempUser.role || 'member',
-            joinedAt: new Date(),
-            isTemporary: true
-          })
-        }
-      }
-
-      group.members.push(...newMembers)
-      await group.save()
-
-      return group
-    } catch (error) {
-      throw new Error(`Failed to add temporary users: ${error.message}`)
-    }
-  }
-
-  /**
-   * Convert temporary user to registered user
-   * @param {string} groupId - Group ID
-   * @param {string} email - Temporary user email
-   * @param {string} userId - New user ID
-   * @returns {Promise<Object>} Updated group
-   */
-  static async convertTempUserToRegistered(groupId, email, userId) {
-    try {
-      const group = await Group.findById(groupId)
-      if (!group) {
-        throw new Error('Group not found')
-      }
-
-      const tempMemberIndex = group.members.findIndex(member => 
-        member.isTemporary && member.email === email
-      )
-
-      if (tempMemberIndex === -1) {
-        throw new Error('Temporary user not found in group')
-      }
-
-      const tempMember = group.members[tempMemberIndex]
-      
-      // Update the member to be a registered user
-      group.members[tempMemberIndex] = {
-        userId: userId,
-        email: email,
-        tempName: tempMember.tempName,
-        role: tempMember.role,
-        joinedAt: tempMember.joinedAt,
-        isTemporary: false
-      }
-
-      await group.save()
-      return group
-    } catch (error) {
-      throw new Error(`Failed to convert temporary user: ${error.message}`)
     }
   }
 
@@ -206,24 +91,18 @@ class InviteService {
         throw new Error('Group not found')
       }
 
-      // Check if requesting user is admin or owner
-      const requestingMember = group.members.find(member => 
-        member.userId && member.userId.toString() === requestingUserId
-      )
-
-      if (!requestingMember || (requestingMember.role !== 'admin' && group.owner.toString() !== requestingUserId)) {
-        throw new Error('Only admins can remove members')
+      // Check if requesting user is group creator
+      if (group.createdBy.toString() !== requestingUserId) {
+        throw new Error('Only group creator can remove members')
       }
 
-      // Cannot remove the owner
-      if (group.owner.toString() === userId) {
-        throw new Error('Cannot remove group owner')
+      // Cannot remove the creator
+      if (group.createdBy.toString() === userId) {
+        throw new Error('Cannot remove group creator')
       }
 
       // Remove the member
-      group.members = group.members.filter(member => 
-        !(member.userId && member.userId.toString() === userId)
-      )
+      group.members = group.members.filter((memberId) => memberId.toString() !== userId)
 
       await group.save()
       return group
@@ -247,33 +126,7 @@ class InviteService {
         throw new Error('Group not found')
       }
 
-      // Check if requesting user is admin or owner
-      const requestingMember = group.members.find(member => 
-        member.userId && member.userId.toString() === requestingUserId
-      )
-
-      if (!requestingMember || (requestingMember.role !== 'admin' && group.owner.toString() !== requestingUserId)) {
-        throw new Error('Only admins can update member roles')
-      }
-
-      // Cannot change owner's role
-      if (group.owner.toString() === userId) {
-        throw new Error('Cannot change group owner role')
-      }
-
-      // Update the member role
-      const memberIndex = group.members.findIndex(member => 
-        member.userId && member.userId.toString() === userId
-      )
-
-      if (memberIndex === -1) {
-        throw new Error('Member not found')
-      }
-
-      group.members[memberIndex].role = role
-      await group.save()
-
-      return group
+      throw new Error('Member roles are no longer supported in user-ID membership mode')
     } catch (error) {
       throw new Error(`Failed to update member role: ${error.message}`)
     }
@@ -290,7 +143,7 @@ class InviteService {
         inviteToken: token,
         inviteTokenExpiry: { $gt: new Date() },
         isActive: true
-      }).select('name description owner inviteTokenExpiry').populate('owner', 'name email')
+      }).select('name description createdBy inviteTokenExpiry').populate('createdBy', 'name email')
 
       if (!group) {
         throw new Error('Invalid or expired invite token')
@@ -301,7 +154,7 @@ class InviteService {
           _id: group._id,
           name: group.name,
           description: group.description,
-          owner: group.owner,
+          createdBy: group.createdBy,
           expiresAt: group.inviteTokenExpiry
         }
       }

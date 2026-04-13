@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { X, DollarSign, CheckCircle, Clock, XCircle, Users, ArrowRightLeft } from 'lucide-react'
 import { settlementService } from '../services/settlementService'
+import { formatCurrency } from '../utils/currency.js'
 import toast from 'react-hot-toast'
 
 const SettlementModal = ({ 
@@ -10,6 +11,27 @@ const SettlementModal = ({
   groupMembers = [], 
   onSettlementCreated 
 }) => {
+  const getErrorMessage = (error, fallbackMessage) => {
+    if (typeof error === 'string') return error
+    if (error?.response?.data?.message) return error.response.data.message
+    if (error?.message) return error.message
+    return fallbackMessage
+  }
+
+  const getMemberUserId = (member) => {
+    if (!member) return ''
+    if (member._id) return member._id
+    if (member.userId && typeof member.userId === 'object') {
+      return member.userId._id || ''
+    }
+    if (typeof member.userId === 'string') {
+      return member.userId
+    }
+    return ''
+  }
+
+  const selectableMembers = (groupMembers || []).filter((member) => Boolean(getMemberUserId(member)))
+
   const [activeTab, setActiveTab] = useState('suggestions')
   const [suggestions, setSuggestions] = useState([])
   const [settlements, setSettlements] = useState([])
@@ -22,13 +44,6 @@ const SettlementModal = ({
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (isOpen && groupId) {
-      fetchSuggestions()
-      fetchSettlements()
-    }
-  }, [isOpen, groupId, fetchSuggestions, fetchSettlements])
 
   const fetchSuggestions = useCallback(async () => {
     setLoading(true)
@@ -53,15 +68,29 @@ const SettlementModal = ({
     }
   }, [groupId])
 
+  useEffect(() => {
+    if (isOpen && groupId) {
+      fetchSuggestions()
+      fetchSettlements()
+    }
+  }, [isOpen, groupId, fetchSuggestions, fetchSettlements])
+
   const handleInputChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    setFormData(prev => ({ ...prev, [name]: value ?? '' }))
   }
 
   const createSettlement = async (settlementData) => {
+    const normalizedFromUser = settlementData.fromUser ? String(settlementData.fromUser).trim() : ''
+    const normalizedToUser = settlementData.toUser ? String(settlementData.toUser).trim() : ''
+
     // Validation: ensure required fields are present
-    if (!settlementData.fromUser || !settlementData.toUser) {
+    if (!normalizedFromUser || !normalizedToUser) {
       toast.error('Please select both From and To users')
+      return
+    }
+    if (normalizedFromUser === normalizedToUser) {
+      toast.error('From and To users must be different')
       return
     }
     if (!settlementData.amount || parseFloat(settlementData.amount) <= 0) {
@@ -73,6 +102,8 @@ const SettlementModal = ({
     try {
       await settlementService.createSettlement({
         ...settlementData,
+        fromUser: normalizedFromUser,
+        toUser: normalizedToUser,
         groupId,
         amount: parseFloat(settlementData.amount)
       })
@@ -83,16 +114,24 @@ const SettlementModal = ({
       resetForm()
     } catch (error) {
       console.error('Error creating settlement:', error)
-      toast.error(error.message || 'Failed to create settlement')
+      toast.error(getErrorMessage(error, 'Failed to create settlement'))
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const handleSuggestionClick = (suggestion) => {
+    const fromUserId = suggestion?.fromUser?.userId || suggestion?.fromUser?._id || ''
+    const toUserId = suggestion?.toUser?.userId || suggestion?.toUser?._id || ''
+
+    if (!fromUserId || !toUserId) {
+      toast.error('Settlement suggestions with guest members must be created manually')
+      return
+    }
+
     setFormData({
-      fromUser: suggestion.fromUser.userId || suggestion.fromUser._id,
-      toUser: suggestion.toUser.userId || suggestion.toUser._id,
+      fromUser: fromUserId,
+      toUser: toUserId,
       amount: suggestion.amount.toString(),
       method: 'manual',
       notes: ''
@@ -134,11 +173,14 @@ const SettlementModal = ({
     })
   }
 
-  const getMemberName = (userId) => {
+  const getMemberName = (userRef) => {
+    if (userRef && typeof userRef === 'object') {
+      return userRef.name || userRef.email || 'Unknown'
+    }
     const member = (groupMembers || []).find(m => 
-      (m.userId?._id === userId) || (m.userId === userId)
+      (m._id === userRef) || (m.userId?._id === userRef) || (m.userId === userRef)
     )
-    return member?.userId?.name || member?.tempName || 'Unknown'
+    return member?.name || member?.userId?.name || member?.email || member?.tempName || 'Unknown'
   }
 
   const getStatusIcon = (status) => {
@@ -157,13 +199,6 @@ const SettlementModal = ({
       case 'cancelled': return 'bg-red-50 text-red-800 border-red-200'
       default: return 'bg-gray-50 text-gray-800 border-gray-200'
     }
-  }
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount)
   }
 
   if (!isOpen) return null
@@ -284,15 +319,15 @@ const SettlementModal = ({
                     </label>
                     <select
                       name="fromUser"
-                      value={formData.fromUser}
+                      value={formData.fromUser || ''}
                       onChange={handleInputChange}
                       required
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Select person</option>
-                      {groupMembers?.map(member => (
-                        <option key={member.userId?._id || member._id} value={member.userId?._id || member._id}>
-                          {member.userId?.name || member.tempName || 'Unknown'}
+                      {selectableMembers.map(member => (
+                        <option key={getMemberUserId(member)} value={getMemberUserId(member)}>
+                          {member.name || member.userId?.name || member.tempName || 'Unknown'}
                         </option>
                       ))}
                     </select>
@@ -304,15 +339,15 @@ const SettlementModal = ({
                     </label>
                     <select
                       name="toUser"
-                      value={formData.toUser}
+                      value={formData.toUser || ''}
                       onChange={handleInputChange}
                       required
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Select person</option>
-                      {groupMembers?.map(member => (
-                        <option key={member.userId?._id || member._id} value={member.userId?._id || member._id}>
-                          {member.userId?.name || member.tempName || 'Unknown'}
+                      {selectableMembers.map(member => (
+                        <option key={getMemberUserId(member)} value={getMemberUserId(member)}>
+                          {member.name || member.userId?.name || member.tempName || 'Unknown'}
                         </option>
                       ))}
                     </select>

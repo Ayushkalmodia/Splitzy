@@ -21,6 +21,14 @@ export const groupService = {
     const res = await api.get(`/groups/${id}/balances`)
     return res.data
   },
+  getOptimizedSettlements: async (id) => {
+    const res = await api.get(`/groups/${id}/optimized-settlements`)
+    return res.data
+  },
+  getGroupExpenses: async (id) => {
+    const res = await api.get(`/groups/${id}/expenses`)
+    return res.data
+  },
   generateInviteLink: async (id, expiresInHours = 24) => {
     const res = await api.post(`/groups/${id}/invite`, { expiresInHours })
     return res.data
@@ -35,6 +43,14 @@ export const groupService = {
   },
   removeMember: async (groupId, memberId) => {
     const res = await api.delete(`/groups/${groupId}/members/${memberId}`)
+    return res.data
+  },
+  generateInviteCode: async (groupId) => {
+    const res = await api.post(`/groups/${groupId}/invite-code`)
+    return res.data
+  },
+  joinByInviteCode: async (inviteCode) => {
+    const res = await api.post('/groups/join', { inviteCode })
     return res.data
   },
   updateMemberRole: async (groupId, memberId, role) => {

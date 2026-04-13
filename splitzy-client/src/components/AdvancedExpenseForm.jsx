@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react'
-import { X, Plus, Save } from 'lucide-react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { X, Save } from 'lucide-react'
 import { expenseService } from '../services/expenseService'
 import { groupService } from '../services/groupService'
 import { authService } from '../services/authService'
+import { analyticsService } from '../services/analyticsService'
+import { slugFromMlLabel } from '../constants/expenseCategories'
 import useFormValidation from '../hooks/useFormValidation.js'
 import Button from './ui/Button.jsx'
 import Input from './ui/Input.jsx'
@@ -22,8 +24,25 @@ const AdvancedExpenseForm = ({
   const [groups, setGroups] = useState([])
   const [currentGroupMembers, setCurrentGroupMembers] = useState([])
   const [splits, setSplits] = useState([])
+  /** Latest ML suggestion from Node → FastAPI (for badge + accept). */
+  const [aiSuggestion, setAiSuggestion] = useState(null)
+  const [isCategorizing, setIsCategorizing] = useState(false)
+  const [categorizeError, setCategorizeError] = useState(null)
   
   const currentUser = authService.getCurrentUser()
+  const initialFormValues = useMemo(() => ({
+    description: '',
+    amount: '',
+    merchant: '',
+    category: 'other',
+    categoryManuallySelected: false,
+    groupId: groupId || '',
+    splitType: 'equal',
+    paidBy: '',
+    notes: '',
+    tags: [],
+    splitBetween: []
+  }), [groupId])
 
   // Initialize form validation
   const {
@@ -36,22 +55,20 @@ const AdvancedExpenseForm = ({
     clearErrors,
     validateForm,
     resetForm
-  } = useFormValidation({
-    description: '',
-    amount: '',
-    category: 'food',
-    groupId: groupId || '',
-    splitType: 'equal',
-    paidBy: '',
-    notes: '',
-    tags: [],
-    splitBetween: []
-  })
+  } = useFormValidation(initialFormValues)
 
   // Fetch groups on mount
   useEffect(() => {
     if (isOpen) {
       fetchGroups()
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) {
+      setAiSuggestion(null)
+      setCategorizeError(null)
+      setIsCategorizing(false)
     }
   }, [isOpen])
 
@@ -72,12 +89,12 @@ const AdvancedExpenseForm = ({
     if (formData.groupId) {
       const group = groups.find(g => g._id === formData.groupId)
       if (group) {
-        const members = group.members.map(member => ({
-          id: member.userId?._id || member.email,
-          userId: member.userId?._id,
-          email: member.email || member.userId?.email,
-          name: member.tempName || member.userId?.name || member.email,
-          isTemporary: member.isTemporary
+        const members = (group.members || []).map(member => ({
+          id: member._id,
+          userId: member._id,
+          email: member.email,
+          name: member.name || member.email,
+          isTemporary: false
         }))
         setCurrentGroupMembers(members)
       }
@@ -86,16 +103,84 @@ const AdvancedExpenseForm = ({
     }
   }, [formData.groupId, groups])
 
+  /**
+   * Debounced ML categorization: description (+ optional merchant, amount) → Node → FastAPI.
+   * Does not override category while the user has explicitly chosen manual mode.
+   */
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const desc = String(formData.description || '').trim()
+    if (desc.length < 3) {
+      setAiSuggestion(null)
+      setCategorizeError(null)
+      setIsCategorizing(false)
+      return undefined
+    }
+
+    const timer = setTimeout(async () => {
+      setIsCategorizing(true)
+      setCategorizeError(null)
+      try {
+        const amt = formData.amount !== '' && formData.amount != null ? parseFloat(formData.amount) : NaN
+        const data = await analyticsService.categorizeExpense({
+          description: desc,
+          merchant: formData.merchant || '',
+          amount: Number.isFinite(amt) ? amt : undefined
+        })
+        const slug = slugFromMlLabel(data.predictedCategory)
+        const rawConf = data.categoryConfidence
+        const confidence = typeof rawConf === 'number' ? rawConf : Number(rawConf)
+        setAiSuggestion({
+          slug,
+          labelDisplay: data.predictedCategory,
+          confidence: Number.isFinite(confidence) ? confidence : 0
+        })
+        if (!formData.categoryManuallySelected) {
+          setValue('category', slug)
+        }
+      } catch (err) {
+        setAiSuggestion(null)
+        setCategorizeError(
+          err.response?.data?.message || err.message || 'Category suggestion unavailable'
+        )
+      } finally {
+        setIsCategorizing(false)
+      }
+    }, 450)
+
+    return () => clearTimeout(timer)
+  }, [
+    isOpen,
+    formData.description,
+    formData.merchant,
+    formData.amount,
+    formData.categoryManuallySelected,
+    setValue
+  ])
+
+  const handleAcceptAiSuggestion = useCallback(() => {
+    if (!aiSuggestion) return
+    setValue('categoryManuallySelected', false)
+    setValue('category', aiSuggestion.slug)
+  }, [aiSuggestion, setValue])
+
+  const handleCategoryUserPick = useCallback(() => {
+    setValue('categoryManuallySelected', true)
+  }, [setValue])
+
   // Initialize form when editing
   useEffect(() => {
     if (editingExpense) {
       const editData = {
         description: editingExpense.description || '',
         amount: editingExpense.amount?.toString() || '',
-        category: editingExpense.category || 'food',
-        groupId: editingExpense.groupId || groupId || '',
+        merchant: editingExpense.merchant || '',
+        category: editingExpense.category || 'other',
+        categoryManuallySelected: true,
+        groupId: editingExpense.groupId?._id || editingExpense.groupId || initialFormValues.groupId || '',
         splitType: editingExpense.splitType || 'equal',
-        paidBy: editingExpense.paidBy || '',
+        paidBy: editingExpense.paidBy?._id || editingExpense.paidBy || '',
         notes: editingExpense.notes || '',
         tags: editingExpense.tags || [],
         splitBetween: editingExpense.splitBetween || []
@@ -116,20 +201,12 @@ const AdvancedExpenseForm = ({
         setSplits(initializedSplits)
       }
     } else {
-      resetForm({
-        description: '',
-        amount: '',
-        category: 'food',
-        groupId: groupId || '',
-        splitType: 'equal',
-        paidBy: '',
-        notes: '',
-        tags: [],
-        splitBetween: []
-      })
+      resetForm(initialFormValues)
       setSplits([])
+      setAiSuggestion(null)
+      setCategorizeError(null)
     }
-  }, [editingExpense, groupId, setValuesBulk, resetForm])
+  }, [editingExpense, initialFormValues, setValuesBulk, resetForm])
 
   // Handle form submission
   const handleSubmit = async (e) => {
@@ -144,17 +221,44 @@ const AdvancedExpenseForm = ({
     clearErrors()
 
     try {
+      const numericAmount = parseFloat(formData.amount)
+      const currentUserId = currentUser?.id || currentUser?._id || null
+      const currentUserEmail = currentUser?.email || null
+
+      // Backend split validation requires at least one split.
+      // For personal expenses, default to a single self split.
+      const normalizedSplits = splits.length > 0
+        ? splits
+        : [{
+            userId: currentUserId,
+            amount: numericAmount,
+            percentage: 100,
+            shares: 1
+          }]
+
       const payload = {
         ...formData,
-        amount: parseFloat(formData.amount),
-        splits: splits.map(split => ({
-          userId: split.userId || null,
-          email: split.email || null,
-          tempName: split.name || '',
-          amount: split.amount,
-          percentage: split.percentage,
-          shares: split.shares
-        }))
+        amount: numericAmount,
+        categoryManuallySelected: Boolean(formData.categoryManuallySelected),
+        splits: normalizedSplits.map((split) => {
+          const mapped = {
+            userId: split.userId,
+            amount: split.amount,
+            percentage: split.percentage,
+            shares: split.shares
+          }
+
+          if (!mapped.userId && currentUserId) {
+            mapped.userId = currentUserId
+          }
+
+          return mapped
+        })
+      }
+
+      const payer = formData.paidBy || currentUserId || currentUserEmail
+      if (payer) {
+        payload.paidBy = payer
       }
 
       let response
@@ -191,21 +295,23 @@ const AdvancedExpenseForm = ({
       onClose()
       resetForm()
       setSplits([])
+      setAiSuggestion(null)
+      setCategorizeError(null)
       clearErrors()
     }
   }
 
   // Handle split type change
-  const handleSplitTypeChange = (splitType) => {
+  const handleSplitTypeChange = useCallback((splitType) => {
     setValue('splitType', splitType)
     setSplits([])
-  }
+  }, [setValue])
 
   // Handle splits change
-  const handleSplitsChange = (newSplits) => {
+  const handleSplitsChange = useCallback((newSplits) => {
     setSplits(newSplits)
     setValue('splits', newSplits)
-  }
+  }, [setValue])
 
   if (!isOpen) return null
 
@@ -234,8 +340,12 @@ const AdvancedExpenseForm = ({
             onFormDataChange={setValue}
             groups={groups}
             members={currentGroupMembers}
-            currentUser={currentUser}
             errors={errors}
+            aiSuggestion={aiSuggestion}
+            isCategorizing={isCategorizing}
+            categorizeError={categorizeError}
+            onAcceptAiSuggestion={handleAcceptAiSuggestion}
+            onCategoryUserChange={handleCategoryUserPick}
           />
 
           {/* Split Type Selection */}

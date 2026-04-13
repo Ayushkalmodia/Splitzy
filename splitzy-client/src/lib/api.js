@@ -8,7 +8,8 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json'
   },
-  timeout: 10000 // 10 second timeout
+  timeout: 10000, // 10 second timeout
+  withCredentials: true
 })
 
 // Add auth token to requests
@@ -26,11 +27,19 @@ apiClient.interceptors.response.use(
   (error) => {
     const status = error.response?.status
     const requestUrl = error.config?.url || ''
-    const isAuthEndpoint = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register')
+    const isAuthEndpoint =
+      requestUrl.includes('/auth/login') ||
+      requestUrl.includes('/auth/register') ||
+      requestUrl.includes('/auth/refresh')
 
     if (status === 401 && !isAuthEndpoint) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
+
+      // Same-tab redirect so protected pages stop firing unauthorized requests
+      if (window.location.pathname !== '/login') {
+        window.location.replace('/login')
+      }
     }
     return Promise.reject(error)
   }

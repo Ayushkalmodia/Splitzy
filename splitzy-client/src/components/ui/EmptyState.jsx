@@ -1,10 +1,13 @@
 import React from 'react'
-import { Plus, Search, FileText } from 'lucide-react'
+import { Plus, Search, FileText, Users } from 'lucide-react'
 
 const EmptyState = ({ 
   type = 'expenses', 
   onAction,
-  actionText 
+  actionText,
+  title,
+  description,
+  action
 }) => {
   const emptyStates = {
     expenses: {
@@ -28,6 +31,19 @@ const EmptyState = ({
   }
 
   const config = emptyStates[type] || emptyStates.expenses
+  const resolvedTitle = title || config.title
+  const resolvedDescription = description || config.description
+  const resolvedAction = action !== undefined
+    ? action
+    : (config.actionText && onAction && (
+      <button
+        onClick={onAction}
+        className="bg-gradient-to-r from-teal-500 to-emerald-600 text-white px-6 py-3 rounded-xl font-medium hover:from-teal-600 hover:to-emerald-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 inline-flex items-center gap-2"
+      >
+        <Plus className="h-4 w-4" />
+        {config.actionText}
+      </button>
+    ))
 
   return (
     <div className="text-center py-12">
@@ -37,20 +53,12 @@ const EmptyState = ({
         </div>
       </div>
       <h3 className="text-lg font-medium text-neutral-900 mb-2">
-        {config.title}
+        {resolvedTitle}
       </h3>
       <p className="text-neutral-600 mb-6 max-w-sm mx-auto">
-        {config.description}
+        {resolvedDescription}
       </p>
-      {config.actionText && onAction && (
-        <button
-          onClick={onAction}
-          className="bg-gradient-to-r from-teal-500 to-emerald-600 text-white px-6 py-3 rounded-xl font-medium hover:from-teal-600 hover:to-emerald-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 inline-flex items-center gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          {config.actionText}
-        </button>
-      )}
+      {resolvedAction}
     </div>
   )
 }

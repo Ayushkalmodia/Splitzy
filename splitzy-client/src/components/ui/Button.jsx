@@ -7,10 +7,12 @@ const Button = forwardRef(({
   className,
   variant = 'primary',
   size = 'md',
+  loading = false,
   isLoading = false,
   disabled = false,
   ...props
 }, ref) => {
+  const computedLoading = isLoading || loading
   const baseStyles = 'inline-flex items-center justify-center rounded-xl font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed'
   
   const variants = {
@@ -34,13 +36,13 @@ const Button = forwardRef(({
         baseStyles,
         variants[variant],
         sizes[size],
-        isLoading && 'cursor-wait',
+        computedLoading && 'cursor-wait',
         className
       )}
-      disabled={disabled || isLoading}
+      disabled={disabled || computedLoading}
       {...props}
     >
-      {isLoading && (
+      {computedLoading && (
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
       )}
       {children}

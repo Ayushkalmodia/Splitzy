@@ -4,7 +4,8 @@ import { toast } from 'react-hot-toast'
 import { FaChartPie } from 'react-icons/fa'
 import { Eye, EyeOff } from 'lucide-react'
 import { authService } from '../services/authService'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth } from '../hooks/useAuth.js'
+import SocialAuthButtons from '../components/SocialAuthButtons.jsx'
 
 const Register = () => {
   const navigate = useNavigate()
@@ -51,8 +52,17 @@ const Register = () => {
       toast.success('Registration successful!')
       navigate('/dashboard', { replace: true })
     } catch (error) {
-      const message = typeof error === 'string' ? error : (error.message || 'Registration failed')
-      toast.error(message)
+      const apiMsg = error.response?.data?.message
+      const validation = error.response?.data?.errors
+      const firstValidation =
+        validation && typeof validation === 'object'
+          ? Object.values(validation)[0]
+          : null
+      const message =
+        typeof error === 'string'
+          ? error
+          : apiMsg || firstValidation || error.message || 'Registration failed'
+      toast.error(typeof message === 'string' ? message : 'Registration failed')
     } finally {
       setLoading(false)
     }
@@ -180,6 +190,8 @@ const Register = () => {
             </p>
           </div>
         </form>
+
+        <SocialAuthButtons disabled={loading} />
       </div>
     </div>
   )

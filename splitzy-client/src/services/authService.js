@@ -1,57 +1,73 @@
-import { api } from '../lib/api.js'
+import apiClient from '../lib/api.js'
 
 export const authService = {
-  // Login user
   login: async (credentials) => {
     try {
-      const response = await api.post('/auth/login', credentials)
+      const response = await apiClient.post('/auth/login', credentials)
       return response.data
     } catch (error) {
       throw error.response?.data || error.message
     }
   },
 
-  // Register user
   register: async (userData) => {
     try {
-      const response = await api.post('/auth/register', userData)
+      const response = await apiClient.post('/auth/register', userData)
       return response.data
     } catch (error) {
       throw error.response?.data || error.message
     }
   },
 
-  // Logout user
-  logout: () => {
+  logout: async () => {
+    try {
+      await apiClient.post('/auth/logout', {}, { withCredentials: true })
+    } catch {
+      // still clear client state
+    }
     localStorage.removeItem('token')
     localStorage.removeItem('user')
   },
 
-  // Get current user
-  getCurrentUser: () => {
-    const user = localStorage.getItem('user')
-    return user ? JSON.parse(user) : null
+  getOAuthStatus: async () => {
+    const response = await apiClient.get('/auth/oauth/status')
+    return response.data
   },
 
-  // Check if user is authenticated
+  refreshSession: async () => {
+    const response = await apiClient.post('/auth/refresh', {}, { withCredentials: true })
+    return response.data
+  },
+
+  getCurrentUser: () => {
+    const user = localStorage.getItem('user')
+    if (!user) {
+      return null
+    }
+    try {
+      return JSON.parse(user)
+    } catch {
+      localStorage.removeItem('user')
+      return null
+    }
+  },
+
   isAuthenticated: () => {
     return !!localStorage.getItem('token')
   },
 
-  // Forgot password
   forgotPassword: async (email) => {
     try {
-      const response = await api.post('/auth/forgot-password', { email })
+      const response = await apiClient.post('/auth/forgot-password', { email })
       return response.data
     } catch (error) {
       throw error.response?.data || error.message
     }
   },
 
-  // Reset password
   resetPassword: async (token, newPassword) => {
     try {
-      const response = await api.post('/auth/reset-password', {
+      const response = await apiClient.post('/auth/reset-password', {
         token,
         newPassword
       })
@@ -60,4 +76,4 @@ export const authService = {
       throw error.response?.data || error.message
     }
   }
-} 
+}

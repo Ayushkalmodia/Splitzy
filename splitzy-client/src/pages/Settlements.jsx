@@ -28,7 +28,10 @@ const Settlements = () => {
   const loadSettlements = async () => {
     try {
       const settlementsData = await settlementService.getSettlements()
-      const settlements = settlementsData?.items || settlementsData || []
+      const settlements = (settlementsData?.items || settlementsData || []).map((settlement) => ({
+        ...settlement,
+        id: settlement.id || settlement._id
+      }))
       
       const pending = settlements.filter(s => s.status === 'pending')
       const completed = settlements.filter(s => s.status === 'confirmed')
@@ -48,7 +51,7 @@ const Settlements = () => {
       // Move settlement from pending to completed
       const updatedSettlements = {
         pending: settlements.pending.filter(s => s.id !== settlement.id),
-        completed: [...settlements.completed, { ...settlement, status: 'completed' }]
+        completed: [...settlements.completed, { ...settlement, status: 'confirmed' }]
       }
       setSettlements(updatedSettlements)
       toast.success('Settlement marked as completed')

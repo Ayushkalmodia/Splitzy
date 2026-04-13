@@ -10,6 +10,7 @@ import Groups from './pages/Groups'
 import Footer from './components/Footer'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import OAuthCallback from './pages/OAuthCallback.jsx'
 import { useAuth } from './hooks/useAuth.js'
 
 // Protected Route component
@@ -60,7 +61,10 @@ const PublicOnlyRoute = ({ children }) => {
 // Component to conditionally render Navbar
 const AppContent = () => {
   const location = useLocation()
-  const isAuthPage = location.pathname === '/login' || location.pathname === '/register'
+  const isAuthPage =
+    location.pathname === '/login' ||
+    location.pathname === '/register' ||
+    location.pathname === '/oauth/callback'
   const isDashboardPage = location.pathname === '/dashboard'
 
   return (
@@ -85,6 +89,7 @@ const AppContent = () => {
               </PublicOnlyRoute>
             }
           />
+          <Route path="/oauth/callback" element={<OAuthCallback />} />
           <Route
             path="/dashboard"
             element={
@@ -126,6 +131,7 @@ const AppContent = () => {
               </ProtectedRoute>
             }
           />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       {!isAuthPage && !isDashboardPage && <Footer />}

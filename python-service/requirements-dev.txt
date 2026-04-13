@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest
+httpx
+pandas
+sqlalchemy
+psycopg2-binary

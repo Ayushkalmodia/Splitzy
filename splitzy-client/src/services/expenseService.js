@@ -14,7 +14,7 @@ export const expenseService = {
   // Get expenses by group
   getExpensesByGroup: async (groupId, params = {}) => {
     try {
-      const response = await api.get(`/expenses/group/${groupId}`, { params })
+      const response = await api.get(`/groups/${groupId}/expenses`, { params })
       return response.data
     } catch (error) {
       throw error.response?.data || error.message

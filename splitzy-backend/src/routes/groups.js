@@ -6,7 +6,11 @@ import {
   updateGroup, 
   deleteGroup,
   getGroupBalances,
+  getGroupOptimizedSettlements,
+  getGroupExpenses,
   generateInviteLink,
+  generateInviteCode,
+  joinByInviteCode,
   joinGroup,
   validateInvite,
   removeMember,
@@ -30,9 +34,13 @@ router.delete('/:id', deleteGroup)
 
 // Group balances
 router.get('/:id/balances', getGroupBalances)
+router.get('/:id/optimized-settlements', getGroupOptimizedSettlements)
+router.get('/:id/expenses', getGroupExpenses)
 
 // Invite system
 router.post('/:id/invite', generateInviteLink)
+router.post('/:id/invite-code', generateInviteCode)
+router.post('/join', joinByInviteCode)
 router.get('/invite/:token', validateInvite)
 router.post('/join/:token', joinGroup)
 

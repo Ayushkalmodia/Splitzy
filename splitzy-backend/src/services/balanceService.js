@@ -28,7 +28,7 @@ class BalanceService {
         .sort({ createdAt: -1 })
 
       // Get all settlements for the group
-      const settlements = await Settlement.find({ groupId })
+      const settlements = await Settlement.find({ groupId, status: 'confirmed' })
         .populate('fromUser', 'name email')
         .populate('toUser', 'name email')
 
@@ -50,6 +50,7 @@ class BalanceService {
 
         if (payerBalance) {
           payerBalance.totalPaid += expense.amount || 0
+          balances.set(paidByKey, payerBalance)
         }
 
         // Process splits
@@ -70,33 +71,36 @@ class BalanceService {
           
           if (splitBalance) {
             splitBalance.totalOwed += split.amount || 0
+            balances.set(splitKey, splitBalance)
           }
         })
-      })
-
-      // Process settlements
-      settlements.forEach(settlement => {
-        const fromKey = settlement.fromUser?._id?.toString() || settlement.fromUser
-        const toKey = settlement.toUser?._id?.toString() || settlement.toUser
-        
-        if (fromKey) {
-          const fromBalance = balances.get(fromKey)
-          if (fromBalance) {
-            fromBalance.netBalance = addCurrency(fromBalance.netBalance, settlement.amount || 0)
-          }
-        }
-        
-        if (toKey) {
-          const toBalance = balances.get(toKey)
-          if (toBalance) {
-            toBalance.netBalance = subtractCurrency(toBalance.netBalance, settlement.amount || 0)
-          }
-        }
       })
 
       // Calculate net balances
       balances.forEach(balance => {
         balance.netBalance = subtractCurrency(balance.totalPaid, balance.totalOwed)
+      })
+
+      // Apply confirmed settlements after base net balances are calculated.
+      settlements.forEach(settlement => {
+        const fromKey = settlement.fromUser?._id?.toString() || settlement.fromUser?.toString()
+        const toKey = settlement.toUser?._id?.toString() || settlement.toUser?.toString()
+
+        if (fromKey) {
+          const fromBalance = balances.get(fromKey)
+          if (fromBalance) {
+            fromBalance.netBalance = addCurrency(fromBalance.netBalance, settlement.amount || 0)
+            balances.set(fromKey, fromBalance)
+          }
+        }
+
+        if (toKey) {
+          const toBalance = balances.get(toKey)
+          if (toBalance) {
+            toBalance.netBalance = subtractCurrency(toBalance.netBalance, settlement.amount || 0)
+            balances.set(toKey, toBalance)
+          }
+        }
       })
 
       // Simplify debts
@@ -285,9 +289,9 @@ class BalanceService {
 
       // Get all groups of user is a member of
       const groups = await Group.find({
-        'members.userId': userId,
+        members: userId,
         isActive: true
-      }).populate('members.userId', 'name email')
+      }).populate('members', 'name email')
 
       let totalOwed = 0
       let totalToReceive = 0

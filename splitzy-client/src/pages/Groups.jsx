@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
-import { Plus, Users, UserPlus, Trash2, Edit2, Settings, DollarSign, Calendar } from 'lucide-react'
+import { Plus, Users, Trash2, Settings, DollarSign, Calendar, Search, X } from 'lucide-react'
 import { groupService } from '../services/groupService'
+import { userService } from '../services/userService'
 import GroupManagement from '../components/GroupManagement.jsx'
 import BalanceSummary from '../components/BalanceSummary.jsx'
 import SettlementModal from '../components/SettlementModal.jsx'
+import { useAuth } from '../hooks/useAuth.js'
+import { useDebounce } from '../hooks/usePerformance.js'
+import { getRealtimeSocket } from '../lib/realtime.js'
 
 const Groups = () => {
   const [groups, setGroups] = useState([])
@@ -15,15 +19,74 @@ const Groups = () => {
   const [showSettlements, setShowSettlements] = useState(false)
   const [showBalances, setShowBalances] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [userSearchQuery, setUserSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [selectedMembers, setSelectedMembers] = useState([])
+  const [inviteCodeInput, setInviteCodeInput] = useState('')
+  const [joinLoading, setJoinLoading] = useState(false)
+  const debouncedUserSearchQuery = useDebounce(userSearchQuery, 300)
+  const { user } = useAuth()
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     members: []
   })
+  useEffect(() => {
+    let isCurrent = true
+    const fetchUsers = async () => {
+      const query = debouncedUserSearchQuery.trim()
+      if (!showGroupForm || !query) {
+        setSearchResults([])
+        setSearchLoading(false)
+        return
+      }
+      setSearchLoading(true)
+      try {
+        const users = await userService.searchUsers(query)
+        if (!isCurrent) return
+        const selectedIds = new Set(selectedMembers.map((member) => member._id))
+        setSearchResults(users.filter((result) => !selectedIds.has(result._id)))
+      } catch (error) {
+        if (!isCurrent) return
+        toast.error('Failed to search users')
+        setSearchResults([])
+      } finally {
+        if (isCurrent) {
+          setSearchLoading(false)
+        }
+      }
+    }
+
+    fetchUsers()
+
+    return () => {
+      isCurrent = false
+    }
+  }, [debouncedUserSearchQuery, showGroupForm, selectedMembers])
+
 
   useEffect(() => {
     fetchGroups()
   }, [])
+
+  useEffect(() => {
+    const socket = getRealtimeSocket()
+    groups.forEach((group) => {
+      socket.emit('group:join', group._id)
+    })
+    const refresh = () => fetchGroups()
+    socket.on('expense:created', refresh)
+    socket.on('expense:updated', refresh)
+    socket.on('expense:deleted', refresh)
+    socket.on('settlement:created', refresh)
+    return () => {
+      socket.off('expense:created', refresh)
+      socket.off('expense:updated', refresh)
+      socket.off('expense:deleted', refresh)
+      socket.off('settlement:created', refresh)
+    }
+  }, [groups])
 
   const fetchGroups = async () => {
     setLoading(true)
@@ -45,9 +108,9 @@ const Groups = () => {
     e.preventDefault()
     try {
       const payload = {
-        name: formData.name,
-        description: formData.description,
-        members: formData.members.filter(m => m.email?.trim())
+        name: formData.name.trim(),
+        description: formData.description?.trim() || undefined,
+        members: selectedMembers.map((member) => member._id)
       }
       
       if (editingGroup?._id) {
@@ -64,7 +127,13 @@ const Groups = () => {
       setShowGroupForm(false)
       setEditingGroup(null)
     } catch (error) {
-      toast.error(error.message || 'Failed to save group')
+      const backendMessage = error?.message || error?.response?.data?.message
+      const validationErrors = error?.response?.data?.errors
+      const firstValidationError =
+        validationErrors && typeof validationErrors === 'object'
+          ? Object.values(validationErrors)[0]
+          : null
+      toast.error(firstValidationError || backendMessage || 'Failed to save group')
     }
   }
 
@@ -74,6 +143,9 @@ const Groups = () => {
       description: '',
       members: []
     })
+    setUserSearchQuery('')
+    setSearchResults([])
+    setSelectedMembers([])
   }
 
   const handleDeleteGroup = async (groupId) => {
@@ -114,27 +186,33 @@ const Groups = () => {
     fetchGroups()
   }
 
-  const addMemberField = () => {
-    setFormData(prev => ({
-      ...prev,
-      members: [...prev.members, { name: '', email: '', role: 'member' }]
-    }))
+  const handleJoinByCode = async () => {
+    const inviteCode = inviteCodeInput.trim()
+    if (!inviteCode) {
+      toast.error('Please enter an invite code')
+      return
+    }
+    setJoinLoading(true)
+    try {
+      await groupService.joinByInviteCode(inviteCode)
+      toast.success('Joined group successfully')
+      setInviteCodeInput('')
+      fetchGroups()
+    } catch (error) {
+      toast.error(error?.message || 'Failed to join group')
+    } finally {
+      setJoinLoading(false)
+    }
   }
 
-  const updateMemberField = (index, field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      members: prev.members.map((member, i) => 
-        i === index ? { ...member, [field]: value } : member
-      )
-    }))
+  const addSelectedMember = (member) => {
+    setSelectedMembers((prev) => [...prev, member])
+    setUserSearchQuery('')
+    setSearchResults([])
   }
 
-  const removeMemberField = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      members: prev.members.filter((_, i) => i !== index)
-    }))
+  const removeSelectedMember = (memberId) => {
+    setSelectedMembers((prev) => prev.filter((member) => member._id !== memberId))
   }
 
   if (loading) {
@@ -150,17 +228,34 @@ const Groups = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold text-gray-900">My Groups</h1>
-          <button
-            onClick={() => {
-              resetForm()
-              setEditingGroup(null)
-              setShowGroupForm(true)
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Create Group
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <input
+                value={inviteCodeInput}
+                onChange={(e) => setInviteCodeInput(e.target.value.toUpperCase())}
+                placeholder="Invite code"
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-36 sm:w-44"
+              />
+              <button
+                onClick={handleJoinByCode}
+                disabled={joinLoading}
+                className="px-3 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors disabled:opacity-50 text-sm"
+              >
+                {joinLoading ? 'Joining...' : 'Join'}
+              </button>
+            </div>
+            <button
+              onClick={() => {
+                resetForm()
+                setEditingGroup(null)
+                setShowGroupForm(true)
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              Create Group
+            </button>
+          </div>
         </div>
 
         {/* Groups Grid */}
@@ -279,45 +374,59 @@ const Groups = () => {
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Members (optional)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={addMemberField}
-                      className="text-blue-600 hover:text-blue-700 text-sm"
-                    >
-                      + Add Member
-                    </button>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {formData.members.map((member, index) => (
-                      <div key={index} className="flex gap-2">
-                        <input
-                          type="text"
-                          value={member.name}
-                          onChange={(e) => updateMemberField(index, 'name', e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          placeholder="Name"
-                        />
-                        <input
-                          type="email"
-                          value={member.email}
-                          onChange={(e) => updateMemberField(index, 'email', e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          placeholder="Email (optional)"
-                        />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Members
+                  </label>
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 text-blue-700 text-sm">
+                      You ({user?.name || user?.email})
+                    </span>
+                    {selectedMembers.map((member) => (
+                      <span key={member._id} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-sm">
+                        {member.name} ({member.email})
                         <button
                           type="button"
-                          onClick={() => removeMemberField(index)}
-                          className="p-2 text-red-500 hover:text-red-700"
+                          onClick={() => removeSelectedMember(member._id)}
+                          className="text-gray-500 hover:text-gray-700"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <X className="w-3 h-3" />
                         </button>
-                      </div>
+                      </span>
                     ))}
+                  </div>
+
+                  <div className="relative">
+                    <div className="flex items-center border border-gray-300 rounded-lg px-3 py-2 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500">
+                      <Search className="w-4 h-4 text-gray-400 mr-2" />
+                      <input
+                        type="text"
+                        value={userSearchQuery}
+                        onChange={(e) => setUserSearchQuery(e.target.value)}
+                        placeholder="Search users by name or email"
+                        className="w-full outline-none text-sm"
+                      />
+                    </div>
+                    {userSearchQuery.trim() && (
+                      <div className="mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                        {searchLoading ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">Searching users...</div>
+                        ) : searchResults.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">No users found</div>
+                        ) : (
+                          searchResults.map((result) => (
+                            <button
+                              key={result._id}
+                              type="button"
+                              onClick={() => addSelectedMember(result)}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                            >
+                              <div className="text-sm font-medium text-gray-900">{result.name}</div>
+                              <div className="text-xs text-gray-500">{result.email}</div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

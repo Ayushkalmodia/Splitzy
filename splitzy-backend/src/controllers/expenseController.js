@@ -1,9 +1,38 @@
 import Expense from '../models/Expense.js'
 import Group from '../models/Group.js'
-import User from '../models/User.js'
 import BalanceService from '../services/balanceService.js'
+import { fetchMlExpenseCategory } from '../services/expenseCategoryMlService.js'
 import { validate, createExpenseSchema, updateExpenseSchema, expenseQuerySchema } from '../utils/validation.js'
 import { isValidCurrency, roundToTwo, addCurrency, subtractCurrency, divideCurrency } from '../utils/currency.js'
+import { emitToGroup } from '../realtime/socket.js'
+
+const isSplitInGroupMembers = (split, group) => {
+  const groupMemberIds = new Set((group.members || []).map((memberId) => memberId.toString()))
+  const splitId = split.userId?.toString()
+  return Boolean(splitId && groupMemberIds.has(splitId))
+}
+
+/**
+ * Enrich payload with ML `predictedCategory` / `categoryConfidence`.
+ * When `applyCategory` is true, also sets `category` to the ML slug.
+ */
+const applyMlCategoryFields = async (expenseData, { manualSelect, applyCategory }) => {
+  const desc = String(expenseData.description || '').trim()
+  if (!desc) return
+
+  const ml = await fetchMlExpenseCategory({
+    description: desc,
+    merchant: expenseData.merchant,
+    amount: expenseData.amount
+  })
+  if (!ml) return
+
+  expenseData.predictedCategory = ml.slug
+  expenseData.categoryConfidence = ml.categoryConfidence
+  if (applyCategory && !manualSelect) {
+    expenseData.category = ml.slug
+  }
+}
 
 export const listExpenses = async (req, res) => {
   try {
@@ -19,7 +48,9 @@ export const listExpenses = async (req, res) => {
     const [sortField, sortDir] = String(sort).split(':')
     const sortObj = { [sortField || 'createdAt']: (sortDir === 'asc' ? 1 : -1) }
 
-    const filter = { createdBy: req.user.id }
+    const groups = await Group.find({ members: req.user.id, isActive: true }).select('_id')
+    const groupIds = groups.map((group) => group._id)
+    const filter = { groupId: { $in: groupIds } }
     if (category) filter.category = category
     if (from || to) {
       filter.date = {}
@@ -35,7 +66,13 @@ export const listExpenses = async (req, res) => {
     const skip = (pageNum - 1) * lim
 
     const [items, total] = await Promise.all([
-      Expense.find(filter).sort(sortObj).skip(skip).limit(lim),
+      Expense.find(filter)
+        .populate('paidBy', 'name email')
+        .populate('splits.userId', 'name email')
+        .populate('groupId', 'name')
+        .sort(sortObj)
+        .skip(skip)
+        .limit(lim),
       Expense.countDocuments(filter)
     ])
     res.json({
@@ -57,7 +94,11 @@ export const listByGroup = async (req, res) => {
     const [sortField, sortDir] = String(sort).split(':')
     const sortObj = { [sortField || 'createdAt']: (sortDir === 'asc' ? 1 : -1) }
 
-    const filter = { createdBy: req.user.id, groupId }
+    const membership = await Group.findOne({ _id: groupId, members: req.user.id, isActive: true }).select('_id')
+    if (!membership) {
+      return res.status(403).json({ message: 'Access denied for this group' })
+    }
+    const filter = { groupId }
     if (category) filter.category = category
     if (from || to) {
       filter.date = {}
@@ -71,7 +112,13 @@ export const listByGroup = async (req, res) => {
     const skip = (pageNum - 1) * lim
 
     const [items, total] = await Promise.all([
-      Expense.find(filter).sort(sortObj).skip(skip).limit(lim),
+      Expense.find(filter)
+        .populate('paidBy', 'name email')
+        .populate('splits.userId', 'name email')
+        .populate('groupId', 'name')
+        .sort(sortObj)
+        .skip(skip)
+        .limit(lim),
       Expense.countDocuments(filter)
     ])
     res.json({ items, page: pageNum, limit: lim, total, hasNext: skip + items.length < total })
@@ -111,55 +158,37 @@ export const createExpense = async (req, res) => {
       percentage: roundToTwo(split.percentage)
     }))
     
-    // Convert email-based paidBy to userId if needed
-    if (typeof expenseData.paidBy === 'string' && expenseData.paidBy.includes('@')) {
-      const paidByUser = await User.findOne({ email: expenseData.paidBy })
-      if (paidByUser) {
-        expenseData.paidBy = paidByUser._id
-      }
+    if (!expenseData.groupId) {
+      return res.status(400).json({ message: 'Group is required for all expenses' })
     }
-    
-    // Convert split emails to userIds where possible
+
+    const group = await Group.findOne({
+      _id: expenseData.groupId,
+      members: req.user.id,
+      isActive: true
+    })
+
+    if (!group) {
+      return res.status(404).json({ message: 'Group not found or access denied' })
+    }
+
+    // Validate that all split participants are group members
     for (const split of expenseData.splits) {
-      if (split.email && !split.userId) {
-        const user = await User.findOne({ email: split.email })
-        if (user) {
-          split.userId = user._id
-        }
+      if (!split.userId) {
+        return res.status(400).json({ message: 'All split participants must be registered group members' })
+      }
+      if (!isSplitInGroupMembers(split, group)) {
+        return res.status(400).json({ message: 'Split participant is not a group member' })
       }
     }
-    
-    // Validate group membership if groupId is provided
-    if (expenseData.groupId) {
-      const group = await Group.findOne({
-        _id: expenseData.groupId,
-        $or: [
-          { owner: req.user.id },
-          { 'members.userId': req.user.id }
-        ],
-        isActive: true
-      })
-      
-      if (!group) {
-        return res.status(404).json({ message: 'Group not found or access denied' })
-      }
-      
-      // Validate that all split participants are group members
-      const groupMemberEmails = group.members.map(m => m.email || m.userId?.email).filter(Boolean)
-      const groupMemberIds = group.members.map(m => m.userId?.toString()).filter(Boolean)
-      
-      for (const split of expenseData.splits) {
-        const splitId = split.userId?.toString()
-        const splitEmail = split.email?.toLowerCase()
-        
-        if (splitId && !groupMemberIds.includes(splitId)) {
-          return res.status(400).json({ message: 'Split participant is not a group member' })
-        }
-        if (splitEmail && !groupMemberEmails.includes(splitEmail)) {
-          return res.status(400).json({ message: 'Split participant is not a group member' })
-        }
-      }
-    }
+
+    const manualSelect = expenseData.categoryManuallySelected === true
+    delete expenseData.categoryManuallySelected
+
+    await applyMlCategoryFields(expenseData, {
+      manualSelect,
+      applyCategory: true
+    })
     
     const expense = await Expense.create({
       ...expenseData,
@@ -170,7 +199,8 @@ export const createExpense = async (req, res) => {
       .populate('paidBy', 'name email')
       .populate('splits.userId', 'name email')
       .populate('groupId', 'name')
-    
+    emitToGroup(expenseData.groupId, 'expense:created', { expense: populatedExpense })
+
     res.status(201).json(populatedExpense)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -183,10 +213,7 @@ export const updateExpense = async (req, res) => {
     const expenseData = req.body
     
     // Check if expense exists and user has permission
-    const existingExpense = await Expense.findOne({
-      _id: id,
-      createdBy: req.user.id
-    })
+    const existingExpense = await Expense.findById(id)
     
     if (!existingExpense) {
       return res.status(404).json({ message: 'Expense not found or access denied' })
@@ -222,39 +249,44 @@ export const updateExpense = async (req, res) => {
       }))
     }
     
-    // Convert email-based paidBy to userId if needed
-    if (typeof expenseData.paidBy === 'string' && expenseData.paidBy.includes('@')) {
-      const paidByUser = await User.findOne({ email: expenseData.paidBy })
-      if (paidByUser) {
-        expenseData.paidBy = paidByUser._id
-      }
+    const targetGroupId = expenseData.groupId || existingExpense.groupId
+    const group = await Group.findOne({ _id: targetGroupId, members: req.user.id, isActive: true })
+    if (!group) {
+      return res.status(404).json({ message: 'Group not found or access denied' })
     }
-    
-    // Convert split emails to userIds where possible
     if (expenseData.splits) {
       for (const split of expenseData.splits) {
-        if (split.email && !split.userId) {
-          const user = await User.findOne({ email: split.email })
-          if (user) {
-            split.userId = user._id
-          }
+        if (!split.userId) {
+          return res.status(400).json({ message: 'All split participants must be registered group members' })
+        }
+        if (!isSplitInGroupMembers(split, group)) {
+          return res.status(400).json({ message: 'Split participant is not a group member' })
         }
       }
     }
-    
-    // Validate group membership if groupId is provided
-    if (expenseData.groupId) {
-      const group = await Group.findOne({
-        _id: expenseData.groupId,
-        $or: [
-          { owner: req.user.id },
-          { 'members.userId': req.user.id }
-        ],
-        isActive: true
+
+    // Updates: preserve category unless client explicitly opts in with `categoryManuallySelected: false`.
+    const manualSelect = expenseData.categoryManuallySelected !== false
+    delete expenseData.categoryManuallySelected
+
+    const textFieldsTouched =
+      expenseData.description !== undefined ||
+      expenseData.merchant !== undefined ||
+      expenseData.amount !== undefined
+
+    if (textFieldsTouched) {
+      const merged = {
+        ...existingExpense.toObject(),
+        ...expenseData
+      }
+      await applyMlCategoryFields(merged, {
+        manualSelect,
+        applyCategory: true
       })
-      
-      if (!group) {
-        return res.status(404).json({ message: 'Group not found or access denied' })
+      expenseData.predictedCategory = merged.predictedCategory
+      expenseData.categoryConfidence = merged.categoryConfidence
+      if (!manualSelect && merged.category) {
+        expenseData.category = merged.category
       }
     }
     
@@ -271,7 +303,8 @@ export const updateExpense = async (req, res) => {
       .populate('paidBy', 'name email')
       .populate('splits.userId', 'name email')
       .populate('groupId', 'name')
-    
+    emitToGroup(populatedExpense.groupId?._id || populatedExpense.groupId, 'expense:updated', { expense: populatedExpense })
+
     res.json(populatedExpense)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -282,13 +315,18 @@ export const deleteExpense = async (req, res) => {
   const { id } = req.params
   try {
     // Check if expense exists and user has permission
-    const expense = await Expense.findOne({ _id: id, createdBy: req.user.id })
+    const expense = await Expense.findById(id)
     if (!expense) {
       return res.status(404).json({ message: 'Expense not found or access denied' })
+    }
+    const group = await Group.findOne({ _id: expense.groupId, members: req.user.id, isActive: true }).select('_id')
+    if (!group) {
+      return res.status(403).json({ message: 'Access denied for this group' })
     }
     
     // Delete the expense
     await Expense.findByIdAndDelete(id)
+    emitToGroup(expense.groupId, 'expense:deleted', { expenseId: id, groupId: expense.groupId })
     
     res.json({ 
       message: 'Expense deleted successfully',
@@ -303,7 +341,9 @@ export const stats = async (req, res) => {
   try {
     const { groupId } = req.query
     
-    let filter = { createdBy: req.user.id }
+    const groups = await Group.find({ members: req.user.id, isActive: true }).select('_id')
+    const groupIds = groups.map((group) => group._id)
+    let filter = { groupId: { $in: groupIds } }
     if (groupId) {
       filter.groupId = groupId
     }
